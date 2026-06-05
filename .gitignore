@@ -9,6 +9,9 @@ dist/
 *.exe
 *.zip
 
+*.bundle
+release-notes.md
+
 .env
 .venv
 env/

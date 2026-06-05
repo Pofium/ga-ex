@@ -7,7 +7,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QProgressBar, QFileDialog,
-    QMessageBox, QComboBox, QApplication
+    QMessageBox, QComboBox, QApplication, QCheckBox
 )
 from PySide6.QtCore import QThread, Signal, QSettings
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon
@@ -26,16 +26,28 @@ class ExtractThread(QThread):
     finished = Signal(list)
     error = Signal(str)
     current_file = Signal(str)
+    skipped = Signal(int)
 
-    def __init__(self, rpa_files: list, output_dir: str):
+    def __init__(
+        self,
+        rpa_files: list,
+        output_dir: str,
+        sanitize_names: bool = True,
+        continue_on_error: bool = True,
+        use_long_paths: bool = True,
+    ):
         super().__init__()
         self.rpa_files = rpa_files
         self.output_dir = output_dir
+        self.sanitize_names = sanitize_names
+        self.continue_on_error = continue_on_error
+        self.use_long_paths = use_long_paths
         self._extractor: Optional[RpaExtractor] = None
 
     def run(self):
         all_extracted = []
         total_files = len(self.rpa_files)
+        total_skipped = 0
 
         for i, rpa_path in enumerate(self.rpa_files):
             if getattr(self, '_cancel_requested', False):
@@ -47,9 +59,18 @@ class ExtractThread(QThread):
             file_output_dir = os.path.join(self.output_dir, rpa_name)
 
             try:
-                self._extractor = RpaExtractor(rpa_path, file_output_dir)
+                self._extractor = RpaExtractor(
+                    rpa_path,
+                    file_output_dir,
+                    sanitize_names=self.sanitize_names,
+                    continue_on_error=self.continue_on_error,
+                    use_long_paths=self.use_long_paths,
+                )
                 files = self._extractor.extract(self._make_progress_callback(i, total_files))
                 all_extracted.extend(files)
+                if self._extractor.skipped_files:
+                    total_skipped += len(self._extractor.skipped_files)
+                    self.skipped.emit(total_skipped)
             except RpaError as e:
                 self.error.emit(f"{os.path.basename(rpa_path)}: {e}")
             except Exception as e:
@@ -163,6 +184,19 @@ class MainWindow(QWidget):
         lang_layout.addWidget(self._lang_combo)
         main_layout.addLayout(lang_layout)
 
+        options_layout = QHBoxLayout()
+        self._sanitize_chk = QCheckBox(i18n.t('opt.sanitize'))
+        self._sanitize_chk.setChecked(True)
+        options_layout.addWidget(self._sanitize_chk)
+        self._long_paths_chk = QCheckBox(i18n.t('opt.long_paths'))
+        self._long_paths_chk.setChecked(True)
+        options_layout.addWidget(self._long_paths_chk)
+        self._continue_chk = QCheckBox(i18n.t('opt.continue_on_error'))
+        self._continue_chk.setChecked(True)
+        options_layout.addWidget(self._continue_chk)
+        options_layout.addStretch()
+        main_layout.addLayout(options_layout)
+
         self._extract_btn = QPushButton(i18n.t('extract.button'))
         self._extract_btn.clicked.connect(self._start_extract)
         self._extract_btn.setEnabled(False)
@@ -196,6 +230,9 @@ class MainWindow(QWidget):
             self._extract_btn.setText(i18n.t('extract.button'))
             self._cancel_btn.setText(i18n.t('cancel.button'))
             self._open_folder_btn.setText(i18n.t('open.folder'))
+            self._sanitize_chk.setText(i18n.t('opt.sanitize'))
+            self._long_paths_chk.setText(i18n.t('opt.long_paths'))
+            self._continue_chk.setText(i18n.t('opt.continue_on_error'))
 
         i18n.on_change(update_ui)
 
@@ -215,7 +252,11 @@ class MainWindow(QWidget):
         if filepath not in self._rpa_files:
             self._rpa_files.append(filepath)
         self._update_file_display()
-        self._output_dir = os.path.dirname(filepath)
+        if len(self._rpa_files) == 1:
+            self._output_dir = os.path.dirname(filepath)
+        else:
+            common = os.path.commonpath(self._rpa_files)
+            self._output_dir = common
         self._folder_edit.setText(self._output_dir)
         self._extract_btn.setEnabled(len(self._rpa_files) > 0)
         settings.setValue('lastFile', filepath)
@@ -232,10 +273,13 @@ class MainWindow(QWidget):
             self._file_edit.setText(f'{len(self._rpa_files)} files selected')
 
     def _browse_rpa(self) -> None:
+        start_dir = ''
+        if self._rpa_files:
+            start_dir = os.path.dirname(self._rpa_files[0])
         filepaths, _ = QFileDialog.getOpenFileNames(
             self,
             'Select RPA files',
-            '',
+            start_dir,
             'RPA files (*.rpa);;All files (*.*)'
         )
         for filepath in filepaths:
@@ -243,15 +287,19 @@ class MainWindow(QWidget):
                 self._rpa_files.append(filepath)
         if filepaths:
             self._update_file_display()
-            self._output_dir = os.path.dirname(filepaths[-1])
+            if len(self._rpa_files) == 1:
+                self._output_dir = os.path.dirname(self._rpa_files[0])
+            else:
+                self._output_dir = os.path.commonpath(self._rpa_files)
             self._folder_edit.setText(self._output_dir)
         self._extract_btn.setEnabled(len(self._rpa_files) > 0)
 
     def _browse_folder(self) -> None:
+        start_dir = self._output_dir if self._output_dir else ''
         folder = QFileDialog.getExistingDirectory(
             self,
             'Select output folder',
-            self._output_dir or ''
+            start_dir
         )
         if folder:
             self._output_dir = folder
@@ -278,10 +326,17 @@ class MainWindow(QWidget):
         self._progress_bar.setValue(0)
         self._status_label.setText(i18n.t('progress.status', '', 0, len(self._rpa_files)))
 
-        self._extract_thread = ExtractThread(self._rpa_files, output_dir)
+        self._extract_thread = ExtractThread(
+            self._rpa_files,
+            output_dir,
+            sanitize_names=self._sanitize_chk.isChecked(),
+            continue_on_error=self._continue_chk.isChecked(),
+            use_long_paths=self._long_paths_chk.isChecked(),
+        )
         self._extract_thread.progress.connect(self._on_progress)
         self._extract_thread.file_progress.connect(self._on_file_progress)
         self._extract_thread.current_file.connect(self._on_current_file)
+        self._extract_thread.skipped.connect(self._on_skipped)
         self._extract_thread.finished.connect(self._on_finished)
         self._extract_thread.error.connect(self._on_error)
         self._extract_thread.start()
@@ -305,6 +360,9 @@ class MainWindow(QWidget):
     def _on_current_file(self, filepath: str) -> None:
         basename = os.path.basename(filepath)
         self._status_label.setText(f'Processing: {basename}...')
+
+    def _on_skipped(self, count: int) -> None:
+        self._status_label.setText(i18n.t('progress.skipped', count))
 
     def _on_finished(self, files: list) -> None:
         self._extract_btn.setVisible(True)

@@ -8,7 +8,7 @@
 
 **RPA Ex** — это удобная утилита с графическим интерфейсом для распаковки файлов `.rpa` (архивы ресурсов движка Ren'Py).
 
-### Особенности (v0.8.2)
+### Особенности (v0.8.4)
 - **Поддержка Drag&Drop**: Просто перетащите один или несколько файлов `.rpa` в окно программы.
 - **Массовая распаковка**: Выделяйте сразу несколько файлов, каждый из них распакуется в свою подпапку.
 - **Гибкий выбор пути**: Путь распаковки по умолчанию — папка исходного файла. Вы можете легко изменить его, выбрав другую директорию или просто дописав нужную папку в текстовом поле (папка будет создана автоматически).
@@ -37,7 +37,7 @@ pyinstaller rpa_extractor.spec --clean
 
 **RPA Extractor** is a user-friendly GUI utility for extracting `.rpa` files (Ren'Py engine resource archives).
 
-### Features (v0.8.2)
+### Features (v0.8.4)
 - **Drag&Drop Support**: Simply drag and drop one or multiple `.rpa` files into the window.
 - **Batch Extraction**: Select multiple files at once; each will be extracted into its own subfolder.
 - **Flexible Output Path**: The default extraction path is the source file's directory. You can easily change it by selecting another directory or simply typing a new folder name in the text field (the folder will be created automatically).

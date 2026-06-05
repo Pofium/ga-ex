@@ -16,6 +16,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'progress.status': 'Извлекаю: {0} ({1}/{2})',
         'progress.complete': 'Готово! Извлечено файлов: {0}',
         'progress.file_complete': 'Готово! Извлечено файлов: {0} из {1}',
+        'progress.skipped': 'Пропущено файлов: {0}',
         'progress.cancelled': 'Отменено',
         'lang.switch': 'EN',
         'overwrite.title': 'Папка не пуста',
@@ -30,6 +31,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'err.path.length': 'Путь слишком длинный',
         'err.path.traversal': 'Недопустимый путь в архиве',
         'err.cancelled': 'Распаковка отменена',
+        'opt.sanitize': 'Заменять недопустимые символы',
+        'opt.long_paths': 'Поддержка длинных путей Windows',
+        'opt.continue_on_error': 'Продолжать при ошибках',
     },
     'en': {
         'window.title': 'RPA Extractor',
@@ -44,6 +48,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'progress.status': 'Extracting: {0} ({1}/{2})',
         'progress.complete': 'Done! Extracted {0} files.',
         'progress.file_complete': 'Done! Extracted {0} of {1} files.',
+        'progress.skipped': 'Skipped {0} files',
         'progress.cancelled': 'Cancelled',
         'lang.switch': 'RU',
         'overwrite.title': 'Folder not empty',
@@ -58,6 +63,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'err.path.length': 'Path too long',
         'err.path.traversal': 'Invalid path in archive',
         'err.cancelled': 'Extraction cancelled',
+        'opt.sanitize': 'Sanitize invalid characters',
+        'opt.long_paths': 'Windows long path support',
+        'opt.continue_on_error': 'Continue on errors',
     },
 }
 
