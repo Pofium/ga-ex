@@ -29,11 +29,16 @@ class RpaReader:
 
     def open(self) -> None:
         self._file = open(self.filepath, 'rb')
-        self._file.seek(0, os.SEEK_END)
-        self._file_size = self._file.tell()
-        self._file.seek(0)
-        self._read_header()
-        self._read_index()
+        try:
+            self._file.seek(0, os.SEEK_END)
+            self._file_size = self._file.tell()
+            self._file.seek(0)
+            self._read_header()
+            self._read_index()
+        except Exception:
+            self._file.close()
+            self._file = None
+            raise
 
     def close(self) -> None:
         if self._file:
@@ -87,8 +92,8 @@ class RpaReader:
                 self.key ^= int(subkey, 16)
 
     def _read_index(self) -> None:
+        """Читает индекс: zlib-decompress (БЕЗ XOR), затем pickle."""
         self._file.seek(self.index_offset)
-
         index_data = self._file.read()
         if not index_data:
             raise InvalidIndexError("Index data is empty")

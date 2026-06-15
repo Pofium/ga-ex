@@ -12,7 +12,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QThread, Signal, QSettings
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon
 
-from core.extractor import RpaExtractor
+from core.extractor import RpaUnpacker
+from core.base_unpacker import UnpackOptions
+from core.detector import FormatDetector, GameFormat
 from core.errors import RpaError, PathTraversalError, PermissionError
 from ui.i18n import i18n
 
@@ -42,7 +44,7 @@ class ExtractThread(QThread):
         self.sanitize_names = sanitize_names
         self.continue_on_error = continue_on_error
         self.use_long_paths = use_long_paths
-        self._extractor: Optional[RpaExtractor] = None
+        self._extractor: Optional[RpaUnpacker] = None
 
     def run(self):
         all_extracted = []
@@ -59,18 +61,25 @@ class ExtractThread(QThread):
             file_output_dir = os.path.join(self.output_dir, rpa_name)
 
             try:
-                self._extractor = RpaExtractor(
-                    rpa_path,
-                    file_output_dir,
+                options = UnpackOptions(
+                    output_dir=file_output_dir,
                     sanitize_names=self.sanitize_names,
                     continue_on_error=self.continue_on_error,
                     use_long_paths=self.use_long_paths,
                 )
-                files = self._extractor.extract(self._make_progress_callback(i, total_files))
-                all_extracted.extend(files)
-                if self._extractor.skipped_files:
-                    total_skipped += len(self._extractor.skipped_files)
+                self._extractor = RpaUnpacker()
+                result = self._extractor.unpack(
+                    rpa_path,
+                    options,
+                    self._make_progress_callback(i, total_files),
+                )
+                all_extracted.extend(result.files_extracted)
+                if result.skipped:
+                    total_skipped += len(result.skipped)
                     self.skipped.emit(total_skipped)
+                if result.errors:
+                    for err in result.errors:
+                        self.error.emit(f"{os.path.basename(rpa_path)}: {err}")
             except RpaError as e:
                 self.error.emit(f"{os.path.basename(rpa_path)}: {e}")
             except Exception as e:
@@ -120,10 +129,13 @@ class DropZone(QLabel):
 
     def dropEvent(self, event: QDropEvent) -> None:
         urls = event.mimeData().urls()
-        if urls:
-            filepath = urls[0].toLocalFile()
-            if filepath.lower().endswith('.rpa'):
-                self.parent().set_rpa_file(filepath)
+        if not urls:
+            return
+        filepath = urls[0].toLocalFile()
+        if os.path.isdir(filepath):
+            self.parent()._scan_dropped_folder(filepath)
+        elif filepath.lower().endswith('.rpa'):
+            self.parent().set_rpa_file(filepath)
 
 
 class MainWindow(QWidget):
@@ -162,6 +174,10 @@ class MainWindow(QWidget):
         self._file_btn = QPushButton(i18n.t('file.browse'))
         self._file_btn.clicked.connect(self._browse_rpa)
         file_layout.addWidget(self._file_btn)
+        self._folder_scan_btn = QPushButton(i18n.t('file.scan_folder'))
+        self._folder_scan_btn.setToolTip(i18n.t('file.scan_folder_tip'))
+        self._folder_scan_btn.clicked.connect(self._browse_game_folder)
+        file_layout.addWidget(self._folder_scan_btn)
         main_layout.addLayout(file_layout)
 
         folder_layout = QHBoxLayout()
@@ -225,6 +241,8 @@ class MainWindow(QWidget):
             self._drop_zone._update_text()
             self._file_label.setText(i18n.t('file.label'))
             self._file_btn.setText(i18n.t('file.browse'))
+            self._folder_scan_btn.setText(i18n.t('file.scan_folder'))
+            self._folder_scan_btn.setToolTip(i18n.t('file.scan_folder_tip'))
             self._folder_label.setText(i18n.t('folder.label'))
             self._folder_btn.setText(i18n.t('folder.choose'))
             self._extract_btn.setText(i18n.t('extract.button'))
@@ -305,6 +323,46 @@ class MainWindow(QWidget):
             self._output_dir = folder
             self._folder_edit.setText(folder)
             settings.setValue('lastFolder', folder)
+
+    def _browse_game_folder(self) -> None:
+        """Выбор папки с игрой → автодетект .rpa файлов."""
+        start_dir = self._output_dir if self._output_dir else ''
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            'Select game folder',
+            start_dir
+        )
+        if not folder:
+            return
+        self._scan_dropped_folder(folder)
+
+    def _scan_dropped_folder(self, folder: str) -> None:
+        """Обработка папки с игрой: автодетект .rpa файлов (для Drag&Drop)."""
+        detector = FormatDetector()
+        info = detector.detect_folder(folder)
+
+        if not info.assets:
+            QMessageBox.information(
+                self,
+                'No RPA files',
+                f'No .rpa archives found in:\n{folder}'
+            )
+            return
+
+        added = 0
+        for asset in info.assets:
+            if asset.path not in self._rpa_files:
+                self._rpa_files.append(asset.path)
+                added += 1
+
+        self._update_file_display()
+        self._output_dir = folder
+        self._folder_edit.setText(folder)
+
+        self._extract_btn.setEnabled(len(self._rpa_files) > 0)
+        self._status_label.setText(
+            f'Found {len(info.assets)} archive(s) in folder ({added} added)'
+        )
 
     def _change_lang(self, lang: str) -> None:
         i18n.set_lang(lang.lower())
