@@ -105,13 +105,26 @@ class FormatDetector:
                     total_size += size
                     continue
 
-                # Также подхватываем Unity-заголовки (для будущего Unity-распаковщика).
-                # Это просто детект — реальный unpacking будет в UnityUnpacker.
-                if fl.endswith(('.assets', '.bundle', '.unity3d', '.assets.resS', '.resS')):
+                # Unity-файлы: ищем все известные расширения
+                # .assets, .assets.resS, .bundle, .unity3d, .resource, .resS
+                # Также файлы без расширения только если имя — типичное Unity-имя
+                is_unity = False
+                if fl.endswith(('.assets', '.bundle', '.unity3d', '.resource', '.resS')):
+                    is_unity = True
+                elif '.' not in filename and (
+                    fl.startswith('level') or fl.startswith('globalgamemanagers')
+                    or fl.startswith('unity') or fl == 'app.info' or fl == 'boot.config'
+                ):
+                    is_unity = True
+                elif fl == 'screen' or 'screenshot' in fl:
+                    # PNG-обложки Unity тоже могут быть полезны
+                    pass
+
+                if is_unity:
                     assets.append(AssetInfo(
                         path=full_path,
                         size=size,
-                        format=GameFormat.UNITY_ASSET,  # новый формат в enum ниже
+                        format=GameFormat.UNITY_ASSET,
                     ))
                     total_size += size
 

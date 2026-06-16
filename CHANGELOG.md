@@ -1,16 +1,35 @@
 # Changelog
 
+## v0.10.0 (2026-06-16) — Unity support (UnityPy)
+
+### Added (MAJOR)
+- **UnityUnpacker** (`unpackers/unity_unpacker.py`) — full Unity asset extraction via UnityPy
+- **Unity asset detection** in `FormatDetector`:
+  - `.assets`, `.assets.resS`, `.bundle`, `.unity3d`, `.resS`
+  - Extensionless files: `level0`..`levelN`, `globalgamemanagers`, `unity default resources`, `unity_builtin_extra`
+  - `resources.assets`, `resources.resource`
+- **ExtractThread** auto-selects unpacker by file format (RPA → RpaUnpacker, otherwise → UnityUnpacker)
+- Added `UnityPy>=1.25.0` to `requirements.txt`
+- **FileSelectionDialog** now shows UnityPy status and warns if not installed
+- Optional import: `UnityUnpacker` is `None` if UnityPy is not installed
+
+### Verified
+- Tested on real Unity game `Pledge Extra credit` (Unity Mono build):
+  - Found 15 Unity assets across all subfolders
+  - **Extracted 207 files** (Texture2D, Sprite, AudioClip, Font, etc.)
+  - 0 errors, all PNGs are valid
+
 ## v0.9.1 (2026-06-15) — Recursive scan, file selection dialog, fixed Open Folder
 
 ### Fixed
-- **Recursive scan** of folders: now searches `.rpa`, `.assets`, `.bundle`, `.unity3d`, `.resS` in **all subfolders**, not just the root
-- **"Open Folder" button** now opens the correct output folder using `os.startfile` (no more wrong paths)
-- Improved error message: "No archives found" now mentions recursive search
+- **Recursive scan** of folders: searches `.rpa`, `.assets`, `.bundle`, `.unity3d`, `.resS` in **all subfolders**
+- **"Open Folder" button** now opens the correct output folder using `os.startfile`
+- Improved error message when no archives found
 
 ### Added
-- **FileSelectionDialog** (`ui/file_selection_dialog.py`): after scanning a folder, you can choose which archives to extract
-  - Shows format tag ([RenPy] / [Unity])
-  - Sort by folder and name (important for Unity numbered assets: `sharedassets0.assets`, `sharedassets1.assets`, ...)
+- **FileSelectionDialog**: after scanning a folder, you can choose which archives to extract
+  - Format tag ([RenPy] / [Unity])
+  - Sort by folder and name (important for Unity numbered assets)
   - Quick filters: "Select all", "Deselect all", "Only RenPy", "Only Unity"
 - `UNITY_ASSET` and `MIXED` formats in `GameFormat` enum
 - Detector now also picks up Unity files: `.assets`, `.bundle`, `.unity3d`, `.assets.resS`, `.resS`

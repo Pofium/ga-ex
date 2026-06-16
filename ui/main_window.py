@@ -14,6 +14,13 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon
 from core.extractor import RpaUnpacker
 from core.base_unpacker import UnpackOptions
 from core.detector import FormatDetector, GameFormat
+
+try:
+    from unpackers.unity_unpacker import UnityUnpacker
+    UNITY_AVAILABLE = True
+except ImportError:
+    UnityUnpacker = None
+    UNITY_AVAILABLE = False
 from core.errors import RpaError, PathTraversalError, PermissionError
 from ui.i18n import i18n
 
@@ -50,6 +57,8 @@ class ExtractThread(QThread):
         total_files = len(self.rpa_files)
         total_skipped = 0
 
+        detector = FormatDetector()
+
         for i, rpa_path in enumerate(self.rpa_files):
             if getattr(self, '_cancel_requested', False):
                 break
@@ -60,13 +69,26 @@ class ExtractThread(QThread):
             file_output_dir = os.path.join(self.output_dir, rpa_name)
 
             try:
+                # Автовыбор распаковщика по формату файла
+                fmt = detector.detect_file(rpa_path)
+                if fmt == GameFormat.RENPY_RPA:
+                    unpacker = RpaUnpacker()
+                elif fmt == GameFormat.UNKNOWN and UNITY_AVAILABLE:
+                    # Пробуем Unity — может это Unity-файл
+                    unpacker = UnityUnpacker()
+                elif UNITY_AVAILABLE:
+                    unpacker = UnityUnpacker()
+                else:
+                    self.error.emit(f"{os.path.basename(rpa_path)}: unknown format")
+                    continue
+
                 options = UnpackOptions(
                     output_dir=file_output_dir,
                     sanitize_names=self.sanitize_names,
                     continue_on_error=self.continue_on_error,
                     use_long_paths=self.use_long_paths,
                 )
-                self._extractor = RpaUnpacker()
+                self._extractor = unpacker
                 result = self._extractor.unpack(
                     rpa_path,
                     options,

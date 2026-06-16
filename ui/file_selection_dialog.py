@@ -33,10 +33,18 @@ class FileSelectionDialog(QDialog):
         # Header
         total_size = sum(a.size for a in assets)
         size_mb = total_size / (1024 * 1024)
-        layout.addWidget(QLabel(
-            f'Найдено {len(assets)} архив(ов) ({size_mb:.1f} MB)\n'
-            f'Выберите какие распаковать:'
-        ))
+        has_rpa = any(a.format.value == 'renpy_rpa' for a in assets)
+        has_unity = any(a.format.value == 'unity_asset' for a in assets)
+
+        msg = f'Найдено {len(assets)} архив(ов) ({size_mb:.1f} MB)\nВыберите какие распаковать:'
+        if has_unity:
+            try:
+                import UnityPy  # noqa
+                msg += '\n\nUnity assets: распаковка поддерживается (UnityPy установлен).'
+            except ImportError:
+                msg += '\n\n⚠ Unity assets найдены, но UnityPy не установлен.\nУстановите: pip install UnityPy'
+
+        layout.addWidget(QLabel(msg))
 
         # Top buttons
         top_buttons = QHBoxLayout()
