@@ -9,6 +9,8 @@ class GameFormat(Enum):
     UNKNOWN = "unknown"
     RENPY_RPA = "renpy_rpa"
     RENPY_FOLDER = "renpy_folder"
+    UNITY_ASSET = "unity_asset"  # Unity .assets / .bundle / .unity3d
+    MIXED = "mixed"  # одновременно Ren'Py и Unity
 
 
 @dataclass
@@ -55,7 +57,7 @@ class FormatDetector:
         return GameFormat.UNKNOWN
 
     def detect_folder(self, folder: str) -> GameInfo:
-        """Сканирует папку с игрой и возвращает список найденных .rpa."""
+        """Сканирует папку с игрой (рекурсивно) и возвращает список найденных .rpa."""
         if not os.path.isdir(folder):
             return GameInfo(
                 format=GameFormat.UNKNOWN,
@@ -68,7 +70,17 @@ class FormatDetector:
         total_size = 0
         is_renpy = False
 
+        # Рекурсивный обход всех подпапок
         for root, _dirs, files in os.walk(folder):
+            # Пропускаем скрытые/служебные папки Unity/Ren'Py рантайма
+            dirs_to_skip = []
+            for d in _dirs:
+                dl = d.lower()
+                if dl in ('__pycache__', '.git', 'node_modules'):
+                    dirs_to_skip.append(d)
+            for d in dirs_to_skip:
+                _dirs.remove(d)
+
             for filename in files:
                 full_path = os.path.join(root, filename)
                 try:
@@ -76,20 +88,45 @@ class FormatDetector:
                 except OSError:
                     continue
 
-                if filename.lower() == 'renpy' or filename.lower() in self.RENPY_EXECUTABLES:
+                fl = filename.lower()
+
+                # Пропускаем Ren'Py executable-ы (не архивы)
+                if fl in ('renpy', 'renpy.exe', 'renpy32.exe', 'renpy64.exe'):
                     is_renpy = True
                     continue
 
-                if filename.lower().endswith('.rpa'):
+                # Ищем .rpa — основной формат Ren'Py
+                if fl.endswith('.rpa'):
                     assets.append(AssetInfo(
                         path=full_path,
                         size=size,
                         format=self.detect_file(full_path),
                     ))
                     total_size += size
+                    continue
 
-        if is_renpy or assets:
-            fmt = GameFormat.RENPY_RPA if assets else GameFormat.RENPY_FOLDER
+                # Также подхватываем Unity-заголовки (для будущего Unity-распаковщика).
+                # Это просто детект — реальный unpacking будет в UnityUnpacker.
+                if fl.endswith(('.assets', '.bundle', '.unity3d', '.assets.resS', '.resS')):
+                    assets.append(AssetInfo(
+                        path=full_path,
+                        size=size,
+                        format=GameFormat.UNITY_ASSET,  # новый формат в enum ниже
+                    ))
+                    total_size += size
+
+        # Определяем итоговый формат
+        has_rpa = any(a.format == GameFormat.RENPY_RPA for a in assets)
+        has_unity = any(a.format == GameFormat.UNITY_ASSET for a in assets)
+
+        if has_rpa and has_unity:
+            fmt = GameFormat.MIXED
+        elif has_rpa:
+            fmt = GameFormat.RENPY_RPA
+        elif has_unity:
+            fmt = GameFormat.UNITY_ASSET
+        elif is_renpy:
+            fmt = GameFormat.RENPY_FOLDER
         else:
             fmt = GameFormat.UNKNOWN
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.9.1 (2026-06-15) — Recursive scan, file selection dialog, fixed Open Folder
+
+### Fixed
+- **Recursive scan** of folders: now searches `.rpa`, `.assets`, `.bundle`, `.unity3d`, `.resS` in **all subfolders**, not just the root
+- **"Open Folder" button** now opens the correct output folder using `os.startfile` (no more wrong paths)
+- Improved error message: "No archives found" now mentions recursive search
+
+### Added
+- **FileSelectionDialog** (`ui/file_selection_dialog.py`): after scanning a folder, you can choose which archives to extract
+  - Shows format tag ([RenPy] / [Unity])
+  - Sort by folder and name (important for Unity numbered assets: `sharedassets0.assets`, `sharedassets1.assets`, ...)
+  - Quick filters: "Select all", "Deselect all", "Only RenPy", "Only Unity"
+- `UNITY_ASSET` and `MIXED` formats in `GameFormat` enum
+- Detector now also picks up Unity files: `.assets`, `.bundle`, `.unity3d`, `.assets.resS`, `.resS`
+
 ## v0.9.0 (2026-06-15) — Architecture refactoring, CLI, tests
 
 ### Added
@@ -7,7 +22,7 @@
 - **CLI mode**: `cli.py` — full command-line support with `--auto-detect`, `--strict`, `--no-sanitize`, etc.
 - **Folder-based mode in GUI**: new "Folder" button scans a game folder for .rpa files automatically
 - **Drag&Drop folder support**: drop a folder onto the window to auto-detect archives
-- **Unit tests**: 37 tests covering sanitization, path traversal, long paths, RPA reader (2.0/3.0)
+- **37 unit tests** covering sanitization, path traversal, long paths, RPA reader (2.0/3.0)
 - New `tests/` directory with `test_sanitize.py`, `test_detector.py`, `test_extractor.py`, `test_rpa_reader.py`
 - `run_tests.py` runner
 

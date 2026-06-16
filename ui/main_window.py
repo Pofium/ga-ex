@@ -1,6 +1,5 @@
 import os
 import sys
-import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -337,31 +336,49 @@ class MainWindow(QWidget):
         self._scan_dropped_folder(folder)
 
     def _scan_dropped_folder(self, folder: str) -> None:
-        """Обработка папки с игрой: автодетект .rpa файлов (для Drag&Drop)."""
+        """Обработка папки с игрой: рекурсивный поиск .rpa / .assets с диалогом выбора."""
         detector = FormatDetector()
         info = detector.detect_folder(folder)
 
         if not info.assets:
             QMessageBox.information(
                 self,
-                'No RPA files',
-                f'No .rpa archives found in:\n{folder}'
+                'No archives found',
+                f'No .rpa or .assets archives found in:\n{folder}\n\n'
+                f'Recursive search was performed in all subfolders.'
             )
             return
 
-        added = 0
-        for asset in info.assets:
+        # Показываем диалог выбора файлов
+        from ui.file_selection_dialog import FileSelectionDialog
+        dialog = FileSelectionDialog(info.assets, self)
+        if dialog.exec() != FileSelectionDialog.Accepted:
+            return
+
+        selected_assets = dialog.get_selected_assets()
+        if not selected_assets:
+            return
+
+        # Добавляем выбранные файлы
+        for asset in selected_assets:
             if asset.path not in self._rpa_files:
                 self._rpa_files.append(asset.path)
-                added += 1
 
         self._update_file_display()
-        self._output_dir = folder
-        self._folder_edit.setText(folder)
+
+        # Output = родительская папка игры (чтобы не путать с самой игрой)
+        # Если это корень игры, создаём подпапку "_extracted"
+        if os.path.abspath(folder) == os.path.abspath(self._output_dir):
+            # Уже установлено
+            pass
+        else:
+            # По умолчанию — папка с игрой
+            self._output_dir = folder
+        self._folder_edit.setText(self._output_dir)
 
         self._extract_btn.setEnabled(len(self._rpa_files) > 0)
         self._status_label.setText(
-            f'Found {len(info.assets)} archive(s) in folder ({added} added)'
+            f'Готово: выбрано {len(selected_assets)} из {len(info.assets)} архивов'
         )
 
     def _change_lang(self, lang: str) -> None:
@@ -428,7 +445,8 @@ class MainWindow(QWidget):
         self._cancel_btn.setVisible(False)
         self._status_label.setText(i18n.t('progress.complete', len(files)))
         self._open_folder_btn.setVisible(True)
-        self._pending_output_dir = self._output_dir
+        # Сохраняем в нормализованном виде — пользователь увидит ЭТУ папку
+        self._pending_output_dir = os.path.normpath(self._output_dir)
 
     def _on_error(self, message: str) -> None:
         self._extract_btn.setVisible(True)
@@ -456,5 +474,31 @@ class MainWindow(QWidget):
         self._status_label.setText(i18n.t('progress.cancelled'))
 
     def _open_output_folder(self) -> None:
-        if self._pending_output_dir and os.path.exists(self._pending_output_dir):
-            subprocess.run(['explorer', self._pending_output_dir])
+        """Открывает папку с распакованными файлами в проводнике Windows."""
+        if not self._pending_output_dir:
+            return
+
+        # Нормализуем путь для Windows
+        target = os.path.normpath(self._pending_output_dir)
+        if not os.path.exists(target):
+            QMessageBox.warning(
+                self,
+                'Folder not found',
+                f'Output folder no longer exists:\n{target}'
+            )
+            return
+
+        # На Windows os.startfile — самый надёжный способ открыть проводник
+        try:
+            if sys.platform == 'win32':
+                os.startfile(target)  # открывает в Explorer
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', target])
+            else:
+                subprocess.run(['xdg-open', target])
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                'Cannot open folder',
+                f'Failed to open:\n{target}\n\nError: {e}'
+            )
