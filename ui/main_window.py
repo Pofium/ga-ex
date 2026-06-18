@@ -15,12 +15,8 @@ from core.extractor import RpaUnpacker
 from core.base_unpacker import UnpackOptions
 from core.detector import FormatDetector, GameFormat
 
-try:
-    from unpackers.unity_unpacker import UnityUnpacker
-    UNITY_AVAILABLE = True
-except ImportError:
-    UnityUnpacker = None
-    UNITY_AVAILABLE = False
+from unpackers.unity_unpacker import UnityUnpacker
+from unpackers import UNITY_AVAILABLE
 from core.errors import RpaError, PathTraversalError, PermissionError
 from ui.i18n import i18n
 
@@ -300,11 +296,11 @@ class MainWindow(QWidget):
         file_layout = QHBoxLayout()
         self._file_label = QLabel(i18n.t('file.label'))
         file_layout.addWidget(self._file_label)
-        # Clickable label — клик показывает попап со списком файлов
-        self._file_edit = QLabel('(перетащите файлы)')
-        self._file_edit.setStyleSheet('QLabel { color: #666; padding: 4px; border: 1px solid #ccc; background: #f9f9f9; }')
+        # Clickable button (100% works) — показывает попап со списком файлов
+        self._file_edit = QPushButton('(перетащите файлы)')
+        self._file_edit.setStyleSheet('QPushButton { text-align: left; padding: 4px 8px; }')
         self._file_edit.setCursor(Qt.PointingHandCursor)
-        self._file_edit.mousePressEvent = self._on_file_label_clicked
+        self._file_edit.clicked.connect(self._on_file_label_clicked)
         file_layout.addWidget(self._file_edit, 1)
         self._file_btn = QPushButton(i18n.t('file.browse'))
         self._file_btn.clicked.connect(self._browse_rpa)

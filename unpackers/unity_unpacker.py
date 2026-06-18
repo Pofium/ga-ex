@@ -15,6 +15,7 @@ EXPORTABLE_TYPES = {
     'Sprite': 'png',
     'TextAsset': 'txt',
     'MonoBehaviour': 'bin',
+    'MonoScript': 'cs',
     'AudioClip': 'wav',
     'Mesh': 'obj',
     'Font': 'ttf',
@@ -162,6 +163,10 @@ class UnityUnpacker(BaseUnpacker):
                     self._export_video(obj, filename, output_dir)
                 elif tname == 'Shader':
                     self._export_shader(obj, filename, output_dir)
+                elif tname == 'MonoBehaviour':
+                    self._export_monobehaviour(obj, filename, output_dir)
+                elif tname == 'MonoScript':
+                    self._export_monoscript(obj, filename, output_dir)
                 else:
                     return (filename, tname, 'unsupported type')
 
@@ -172,35 +177,44 @@ class UnityUnpacker(BaseUnpacker):
             except Exception as e:
                 return (filename, tname, f'{type(e).__name__}: {e}')
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            for i, obj in enumerate(exportable):
+        # Обрабатываем батчами для ускорения
+        BATCH_SIZE = 100
+        processed = 0
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            for batch_start in range(0, len(exportable), BATCH_SIZE):
                 if self._cancel_requested:
                     result.errors.append("Cancelled by user")
                     break
 
-                tname = obj.type.name
-                filename = f'{tname}_{obj.path_id}.{EXPORTABLE_TYPES[tname]}'
+                batch = exportable[batch_start:batch_start + BATCH_SIZE]
+                futures = []
+                for obj in batch:
+                    tname = obj.type.name
+                    filename = f'{tname}_{obj.path_id}.{EXPORTABLE_TYPES[tname]}'
+                    future = executor.submit(_export_one, obj)
+                    futures.append((future, filename, tname))
 
-                if progress_callback:
-                    progress_callback(filename, i + 1, len(exportable))
-
-                future = executor.submit(_export_one, obj)
-                try:
-                    fname, tn, err = future.result(timeout=PER_OBJECT_TIMEOUT)
-                    if err is None:
-                        result.files_extracted.append(fname)
-                    else:
+                # Собираем результаты батча
+                for future, filename, tname in futures:
+                    processed += 1
+                    if progress_callback:
+                        progress_callback(filename, processed, len(exportable))
+                    try:
+                        fname, tn, err = future.result(timeout=PER_OBJECT_TIMEOUT)
+                        if err is None:
+                            result.files_extracted.append(fname)
+                        else:
+                            result.skipped.append({
+                                'path': fname,
+                                'reason': f'{tn}: {err}',
+                            })
+                            _log_error(f'SKIP {fname}: {err}')
+                    except FutureTimeout:
                         result.skipped.append({
-                            'path': fname,
-                            'reason': f'{tn}: {err}',
+                            'path': filename,
+                            'reason': f'{tname}: timeout',
                         })
-                        _log_error(f'SKIP {fname}: {err}')
-                except FutureTimeout:
-                    result.skipped.append({
-                        'path': filename,
-                        'reason': f'{tname}: timeout ({PER_OBJECT_TIMEOUT}s)',
-                    })
-                    _log_error(f'TIMEOUT {filename} after {PER_OBJECT_TIMEOUT}s')
+                        _log_error(f'TIMEOUT {filename}')
 
         if skipped_count > 0:
             result.skipped.append({
@@ -326,6 +340,37 @@ class UnityUnpacker(BaseUnpacker):
         if hasattr(data, 'm_Script') and data.m_Script:
             with open(path, 'w', encoding='utf-8', errors='replace') as f:
                 f.write(str(data.m_Script))
+
+    def _export_monobehaviour(self, obj, filename: str, output_dir: str) -> None:
+        """Экспорт MonoBehaviour — это сырой binary dump, часто содержит ScriptableObject данные."""
+        data = obj.read()
+        path = os.path.join(output_dir, filename)
+        if hasattr(data, 'raw_data') and data.raw_data:
+            with open(path, 'wb') as f:
+                f.write(data.raw_data)
+        elif hasattr(data, 'm_Name') and data.m_Name:
+            # Создаём пустой файл с именем (чтобы не скипать)
+            with open(path + '.name.txt', 'w', encoding='utf-8') as f:
+                f.write(data.m_Name)
+
+    def _export_monoscript(self, obj, filename: str, output_dir: str) -> None:
+        """Экспорт MonoScript — информация о классе."""
+        data = obj.read()
+        path = os.path.join(output_dir, filename)
+        info = []
+        if hasattr(data, 'm_Name') and data.m_Name:
+            info.append(f'Name: {data.m_Name}')
+        if hasattr(data, 'm_ClassName') and data.m_ClassName:
+            info.append(f'ClassName: {data.m_ClassName}')
+        if hasattr(data, 'm_Namespace') and data.m_Namespace:
+            info.append(f'Namespace: {data.m_Namespace}')
+        if info:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(info))
+        else:
+            # Если нет данных — всё равно создаём файл чтобы не скипать
+            with open(path, 'wb') as f:
+                pass
 
 
 def options_safe(s: str) -> bool:

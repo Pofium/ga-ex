@@ -1,11 +1,12 @@
 """Пакет распаковщиков для разных форматов игровых ассетов."""
 from .rpa_unpacker import RpaUnpacker
+from .unity_unpacker import UnityUnpacker
 
-__all__ = ['RpaUnpacker']
+__all__ = ['RpaUnpacker', 'UnityUnpacker']
 
-# UnityUnpacker импортируется опционально (нужен UnityPy)
+# Проверяем наличие UnityPy
 try:
-    from .unity_unpacker import UnityUnpacker
-    __all__.append('UnityUnpacker')
+    import UnityPy  # noqa: F401
+    UNITY_AVAILABLE = True
 except ImportError:
-    UnityUnpacker = None
+    UNITY_AVAILABLE = False
