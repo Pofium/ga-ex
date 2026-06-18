@@ -5,6 +5,8 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 block_cipher = None
 
 datas = collect_data_files('PySide6')
+# UnityPy требует бинарные ресурсы (lzma.tpk, brotli.tpk, etc.) для декодирования
+datas += collect_data_files('UnityPy')
 datas.append(('icon.ico', '.'))
 
 # Собираем ВСЕ подмодули UnityPy явно — PyInstaller сам не находит
