@@ -7,10 +7,16 @@ block_cipher = None
 datas = collect_data_files('PySide6')
 # UnityPy требует бинарные ресурсы (lzma.tpk, brotli.tpk, etc.) для декодирования
 datas += collect_data_files('UnityPy')
+# archspec (зависимость numpy → UnityPy) содержит JSON схемы процессоров
+datas += collect_data_files('archspec')
+# numpy динамические библиотеки
+datas += collect_data_files('numpy')
 datas.append(('icon.ico', '.'))
 
 # fmod.dll нужен UnityPy для декодирования текстур и аудио
 binaries = collect_dynamic_libs('fmod_toolkit')
+# numpy.dll, openblas.dll и пр.
+binaries += collect_dynamic_libs('numpy')
 
 # Собираем ВСЕ подмодули UnityPy явно — PyInstaller сам не находит
 unitypy_submodules = collect_submodules('UnityPy')

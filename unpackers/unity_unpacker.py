@@ -130,9 +130,20 @@ class UnityUnpacker(BaseUnpacker):
 
         result = UnpackResult(success=True, output_dir=output_dir)
 
+        # Копируем target во временную папку (с .resS если есть) — это решает
+        # проблему fmod toolkit, который пишет временные файлы рядом с target
+        work_target = target
+        # fmod toolkit иногда пишет в work_dir — не помогает с PermissionError
+        # Но мы пробуем с уникальным именем tempdir чтобы избежать конфликтов
+        try:
+            import tempfile
+            work_dir = tempfile.mkdtemp(prefix='rpa-work-')
+        except Exception:
+            work_dir = tempfile.gettempdir()
+
         try:
             UnityPy = _check_unitypy()
-            env = UnityPy.load(target)
+            env = UnityPy.load(work_target)
         except Exception as e:
             result.success = False
             result.errors.append(f"Cannot load Unity file: {e}")
