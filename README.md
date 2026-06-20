@@ -1,4 +1,4 @@
-# RPA Extractor
+# GA Extractor
 
 [🇷🇺 Русский](#русский) | [🇬🇧 English](#english)
 
@@ -6,7 +6,7 @@
 
 ## Русский
 
-**RPA Extractor** — это утилита для распаковки файлов `.rpa` (архивы ресурсов движка Ren'Py) с графическим интерфейсом и CLI.
+**GA Extractor** — это утилита для распаковки файлов `.rpa` (архивы ресурсов движка Ren'Py) с графическим интерфейсом и CLI.
 
 ### Особенности (v0.9.0)
 - **Поддержка Drag&Drop**: перетаскивайте `.rpa` файлы или папки с игрой прямо в окно.
@@ -21,12 +21,12 @@
 - **Standalone**: один `.exe` файл, не требует Python.
 
 ### Установка
-1. Скачайте `RPAExtractor-v0.9.0-windows.zip` из [Releases](https://github.com/Pofium/rpa-ex/releases).
+1. Скачайте `GAExtractor-v0.9.0-windows.zip` из [Releases](https://github.com/Pofium/rpa-ex/releases).
 2. Распакуйте в любую папку.
-3. Запустите `RPAExtractor.exe`.
+3. Запустите `GAExtractor.exe`.
 
 ### Использование GUI
-1. Запустите `RPAExtractor.exe`.
+1. Запустите `GAExtractor.exe`.
 2. Перетащите `.rpa` файл или папку с игрой в окно, либо нажмите «Обзор...» / «Папка».
 3. При необходимости измените путь распаковки.
 4. Нажмите «Распаковать».
@@ -34,19 +34,19 @@
 ### Использование CLI
 ```bash
 # Распаковать один файл
-RPAExtractor.exe file.rpa -o output_dir
+GAExtractor.exe file.rpa -o output_dir
 
 # Распаковать все .rpa из папки (автодетект)
-RPAExtractor.exe C:\Games\MyGame -o C:\Extracted --auto-detect
+GAExtractor.exe C:\Games\MyGame -o C:\Extracted --auto-detect
 
 # Строгий режим (без continue-on-error)
-RPAExtractor.exe file.rpa -o output --strict
+GAExtractor.exe file.rpa -o output --strict
 
 # Без санитизации имён
-RPAExtractor.exe file.rpa -o output --no-sanitize
+GAExtractor.exe file.rpa -o output --no-sanitize
 
 # Версия
-RPAExtractor.exe --version
+GAExtractor.exe --version
 ```
 
 ### Запуск тестов
@@ -64,7 +64,7 @@ pyinstaller rpa_extractor.spec --clean
 
 ## English
 
-**RPA Extractor** — utility for extracting `.rpa` files (Ren'Py engine resource archives) with GUI and CLI.
+**GA Extractor** — utility for extracting `.rpa` files (Ren'Py engine resource archives) with GUI and CLI.
 
 ### Features (v0.9.0)
 - **Drag&Drop support**: drop `.rpa` files or game folders directly into the window.
@@ -79,12 +79,12 @@ pyinstaller rpa_extractor.spec --clean
 - **Standalone**: single `.exe` file, no Python required.
 
 ### Installation
-1. Download `RPAExtractor-v0.9.0-windows.zip` from [Releases](https://github.com/Pofium/rpa-ex/releases).
+1. Download `GAExtractor-v0.9.0-windows.zip` from [Releases](https://github.com/Pofium/rpa-ex/releases).
 2. Extract to any folder.
-3. Run `RPAExtractor.exe`.
+3. Run `GAExtractor.exe`.
 
 ### GUI usage
-1. Run `RPAExtractor.exe`.
+1. Run `GAExtractor.exe`.
 2. Drag a `.rpa` file or game folder into the window, or click "Browse..." / "Folder".
 3. Optionally change the output path.
 4. Click "Extract".
@@ -92,19 +92,19 @@ pyinstaller rpa_extractor.spec --clean
 ### CLI usage
 ```bash
 # Extract a single file
-RPAExtractor.exe file.rpa -o output_dir
+GAExtractor.exe file.rpa -o output_dir
 
 # Extract all .rpa from a folder (auto-detect)
-RPAExtractor.exe C:\Games\MyGame -o C:\Extracted --auto-detect
+GAExtractor.exe C:\Games\MyGame -o C:\Extracted --auto-detect
 
 # Strict mode (no continue-on-error)
-RPAExtractor.exe file.rpa -o output --strict
+GAExtractor.exe file.rpa -o output --strict
 
 # Disable name sanitization
-RPAExtractor.exe file.rpa -o output --no-sanitize
+GAExtractor.exe file.rpa -o output --no-sanitize
 
 # Show version
-RPAExtractor.exe --version
+GAExtractor.exe --version
 ```
 
 ### Running tests

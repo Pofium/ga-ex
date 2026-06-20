@@ -28,6 +28,20 @@ EXPORTABLE_TYPES = {
 PER_OBJECT_TIMEOUT = 10
 
 
+def _sanitize_for_path(name: str) -> str:
+    """Очищает имя от символов, недопустимых в путях Windows."""
+    if not name:
+        return ''
+    # Запрещаем: \ / : * ? " < > | и управляющие символы
+    bad = '<>:"/\\|?*\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f'
+    cleaned = ''.join('_' if c in bad else c for c in name)
+    # Заменяем пробелы в начале/конце и двойные пробелы
+    cleaned = cleaned.strip().strip('.')
+    if not cleaned:
+        return ''
+    return cleaned[:120]  # Ограничиваем длину
+
+
 def _check_unitypy():
     """Проверяет наличие UnityPy и выбрасывает понятную ошибку."""
     try:
@@ -130,20 +144,58 @@ class UnityUnpacker(BaseUnpacker):
 
         result = UnpackResult(success=True, output_dir=output_dir)
 
-        # Копируем target во временную папку (с .resS если есть) — это решает
-        # проблему fmod toolkit, который пишет временные файлы рядом с target
-        work_target = target
-        # fmod toolkit иногда пишет в work_dir — не помогает с PermissionError
-        # Но мы пробуем с уникальным именем tempdir чтобы избежать конфликтов
+        # Создаём work_dir и копируем туда .resS/.resource (fmod toolkit их там ищет)
         try:
-            import tempfile
-            work_dir = tempfile.mkdtemp(prefix='rpa-work-')
+            import tempfile as _tempfile
+            import io
+            work_dir = _tempfile.mkdtemp(prefix='rpa-work-')
         except Exception:
-            work_dir = tempfile.gettempdir()
+            work_dir = _tempfile.gettempdir()
 
+        # Копируем связанные .resS/.resource в work_dir чтобы fmod мог их найти
+        try:
+            target_basename = os.path.basename(target)
+            target_dir_orig = os.path.dirname(target)
+            base_part = target_basename.split('.')[0]
+            for fname in os.listdir(target_dir_orig):
+                full = os.path.join(target_dir_orig, fname)
+                if not os.path.isfile(full) or fname == target_basename:
+                    continue
+                if fname.startswith(base_part + '.') and ('.resS' in fname or fname.endswith('.resource')):
+                    try:
+                        with open(full, 'rb') as src_f:
+                            d = src_f.read()
+                        with open(os.path.join(work_dir, fname), 'wb') as dst_f:
+                            dst_f.write(d)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Загружаем через BytesIO + меняем CWD — fmod toolkit пишет временные
+        # файлы в CWD, поэтому меняем на work_dir
         try:
             UnityPy = _check_unitypy()
-            env = UnityPy.load(work_target)
+            file_data = None
+            try:
+                with open(target, 'rb') as src_f:
+                    file_data = src_f.read()
+            except Exception as read_err:
+                _log_error(f'Cannot read target: {read_err}')
+                file_data = None
+
+            if file_data is not None:
+                old_cwd = os.getcwd()
+                try:
+                    os.chdir(work_dir)
+                    env = UnityPy.load(io.BytesIO(file_data))
+                finally:
+                    try:
+                        os.chdir(old_cwd)
+                    except Exception:
+                        pass
+            else:
+                env = UnityPy.load(target)
         except Exception as e:
             result.success = False
             result.errors.append(f"Cannot load Unity file: {e}")
@@ -190,10 +242,21 @@ class UnityUnpacker(BaseUnpacker):
                 else:
                     return (filename, tname, 'unsupported type')
 
+                # Проверяем файл в любой подпапке (m_Name группирует в подпапку)
+                # Сначала ищем в output_dir/<filename>, потом в подпапках
                 full_path = os.path.join(output_dir, filename)
                 if not os.path.exists(full_path) or os.path.getsize(full_path) == 0:
-                    return (filename, tname, 'no data (empty or missing)')
-                return (filename, tname, None)
+                    # Ищем в подпапках (scene_name)
+                    for entry in os.listdir(output_dir):
+                        subdir = os.path.join(output_dir, entry)
+                        if os.path.isdir(subdir):
+                            candidate = os.path.join(subdir, filename)
+                            if os.path.exists(candidate) and os.path.getsize(candidate) > 0:
+                                full_path = candidate
+                                break
+                    else:
+                        return (filename, tname, 'no data (empty or missing)')
+                return (os.path.basename(os.path.dirname(full_path)) + '/' + filename if os.path.dirname(full_path) != output_dir else filename, tname, None)
             except Exception as e:
                 return (filename, tname, f'{type(e).__name__}: {e}')
 
@@ -263,6 +326,15 @@ class UnityUnpacker(BaseUnpacker):
         except Exception as e:
             raise RuntimeError(f'obj.read() failed: {type(e).__name__}: {e}')
 
+        # Иерархия: используем m_Name как подпапку (напр. 'loca_bathroom' = папка сцены)
+        scene_name = None
+        try:
+            m_name = getattr(data, 'm_Name', None)
+            if m_name:
+                scene_name = _sanitize_for_path(m_name)
+        except Exception:
+            pass
+
         # Некоторые текстуры имеют image=None (битые, или требуют fmod)
         img = getattr(data, 'image', None)
         if img is None:
@@ -270,15 +342,25 @@ class UnityUnpacker(BaseUnpacker):
             try:
                 raw = getattr(data, 'image_data', None) or getattr(data, 'm_StreamData', None)
                 if raw:
-                    path = os.path.join(output_dir, filename + '.bin')
-                    with open(path, 'wb') as f:
-                        f.write(bytes(raw) if not isinstance(raw, (bytes, bytearray)) else raw)
+                    if scene_name:
+                        bin_path = os.path.join(output_dir, scene_name, filename + '.bin')
+                        os.makedirs(os.path.dirname(bin_path), exist_ok=True)
+                    else:
+                        bin_path = os.path.join(output_dir, filename + '.bin')
+                    raw_bytes = bytes(raw) if not isinstance(raw, (bytes, bytearray)) else raw
+                    with open(bin_path, 'wb') as f:
+                        f.write(raw_bytes)
                     return
             except Exception:
                 pass
             raise RuntimeError('Texture2D has no image (fmod missing or corrupt)')
 
-        path = os.path.join(output_dir, filename)
+        if scene_name:
+            subdir = os.path.join(output_dir, scene_name)
+            os.makedirs(subdir, exist_ok=True)
+            path = os.path.join(subdir, filename)
+        else:
+            path = os.path.join(output_dir, filename)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             # fmod делает распаковку через временный файл — ставим TMPDIR на наш tempdir
@@ -305,7 +387,20 @@ class UnityUnpacker(BaseUnpacker):
         img = getattr(data, 'image', None)
         if not img:
             raise RuntimeError('Sprite has no image (fmod missing or corrupt)')
-        path = os.path.join(output_dir, filename)
+        # Иерархия: m_Name как подпапка
+        scene_name = None
+        try:
+            m_name = getattr(data, 'm_Name', None)
+            if m_name:
+                scene_name = _sanitize_for_path(m_name)
+        except Exception:
+            pass
+        if scene_name:
+            subdir = os.path.join(output_dir, scene_name)
+            os.makedirs(subdir, exist_ok=True)
+            path = os.path.join(subdir, filename)
+        else:
+            path = os.path.join(output_dir, filename)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             import tempfile
@@ -358,7 +453,7 @@ class UnityUnpacker(BaseUnpacker):
         try:
             mesh = data.mesh
             # Сборка OBJ вручную
-            lines = ['# Exported by RPA Extractor', f'o {obj.path_id}']
+            lines = ['# Exported by GA Extractor', f'o {obj.path_id}']
             # Vertices
             verts = mesh.m_Vertices
             for v in verts:

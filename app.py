@@ -5,7 +5,7 @@ from ui.main_window import MainWindow
 
 def main() -> None:
     app = QApplication(sys.argv)
-    app.setApplicationName('RPA Extractor')
+    app.setApplicationName('GA Extractor')
 
     window = MainWindow()
     window.show()

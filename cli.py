@@ -46,7 +46,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.version:
-        print('rpa-ex v0.9.0')
+        print('rpa-ex v0.11.0')
         return 0
 
     if not os.path.exists(args.target):

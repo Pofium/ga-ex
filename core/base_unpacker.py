@@ -13,6 +13,9 @@ class UnpackOptions:
     use_long_paths: bool = True
     overwrite: bool = False
     create_subdirs: bool = True
+    # Путь к exe игры (используется GaxUnpacker для извлечения ключа
+    # CatSystem2 из исполняемого файла)
+    game_exe_path: Optional[str] = None
 
 
 @dataclass
@@ -22,6 +25,7 @@ class UnpackResult:
     files_extracted: List[str] = field(default_factory=list)
     skipped: List[dict] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
     output_dir: str = ''
 
 

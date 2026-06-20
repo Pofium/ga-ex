@@ -11,17 +11,20 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QThread, Signal, QSettings, Qt
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon
 
-from core.extractor import RpaUnpacker
+from core.extractor import (
+    RpaUnpacker, Xp3Unpacker, RpgmUnpacker, TelltaleUnpacker,
+    WolfUnpacker, UnrealPakUnpacker, GodotPckUnpacker, GaxUnpacker,
+    SevenZipUnpacker,
+)
 from core.base_unpacker import UnpackOptions
 from core.detector import FormatDetector, GameFormat
-
 from unpackers.unity_unpacker import UnityUnpacker
 from unpackers import UNITY_AVAILABLE
 from core.errors import RpaError, PathTraversalError, PermissionError
 from ui.i18n import i18n
 
 
-settings = QSettings('RPAExtractor', 'RPAExtractor')
+settings = QSettings('GAExtractor', 'GAExtractor')
 
 
 class ExtractThread(QThread):
@@ -29,8 +32,10 @@ class ExtractThread(QThread):
     file_progress = Signal(str, int, int, int, int)
     finished = Signal(list)
     error = Signal(str)
+    warning = Signal(str)
     current_file = Signal(str)
     skipped = Signal(int)
+    needs_exe = Signal(str)  # Сигнал: для .gax нужен exe
 
     def __init__(
         self,
@@ -39,6 +44,7 @@ class ExtractThread(QThread):
         sanitize_names: bool = True,
         continue_on_error: bool = True,
         use_long_paths: bool = True,
+        game_exe_path: Optional[str] = None,
     ):
         super().__init__()
         self.rpa_files = rpa_files
@@ -46,7 +52,11 @@ class ExtractThread(QThread):
         self.sanitize_names = sanitize_names
         self.continue_on_error = continue_on_error
         self.use_long_paths = use_long_paths
+        self.game_exe_path = game_exe_path
         self._extractor: Optional[RpaUnpacker] = None
+        self._has_gax = any(
+            f.lower().endswith('.gax') for f in rpa_files
+        )
 
     def run(self):
         all_extracted = []
@@ -65,7 +75,6 @@ class ExtractThread(QThread):
             file_output_dir = os.path.join(self.output_dir, rpa_name)
 
             # Защита: если file_output_dir указывает на саму исходную папку
-            # (т.е. пытаемся писать рядом с исходным файлом),
             # или папка уже занята файлами игры — создаём уникальную подпапку
             target_dir = os.path.dirname(os.path.abspath(rpa_path))
             if os.path.normcase(file_output_dir) == os.path.normcase(target_dir):
@@ -82,10 +91,37 @@ class ExtractThread(QThread):
             try:
                 # Автовыбор распаковщика по формату файла
                 fmt = detector.detect_file(rpa_path)
+                is_unity = fmt == GameFormat.UNITY_ASSET
+                is_xp3 = fmt == GameFormat.KIRIKIRI_XP3
+                is_rpgm = fmt in (
+                    GameFormat.RPG_MAKER_RGSSAD, GameFormat.RPG_MAKER_RGSS2A,
+                    GameFormat.RPG_MAKER_RGSS3A, GameFormat.RPG_MAKER_MV,
+                )
+                is_7z = fmt == GameFormat.GENERIC_7ZIP
+
+                # Unity/XP3/RPGM/7z — иерархия идёт изнутри архива
+                if is_unity or is_xp3 or is_rpgm or is_7z:
+                    file_output_dir = self.output_dir
                 if fmt == GameFormat.RENPY_RPA:
                     unpacker = RpaUnpacker()
+                elif fmt == GameFormat.KIRIKIRI_XP3:
+                    unpacker = Xp3Unpacker()
+                elif fmt in (GameFormat.RPG_MAKER_RGSSAD, GameFormat.RPG_MAKER_RGSS2A,
+                             GameFormat.RPG_MAKER_RGSS3A, GameFormat.RPG_MAKER_MV):
+                    unpacker = RpgmUnpacker()
+                elif fmt == GameFormat.TELLTALE_TTARCH:
+                    unpacker = TelltaleUnpacker()
+                elif fmt == GameFormat.WOLF_RPG:
+                    unpacker = WolfUnpacker()
+                elif fmt == GameFormat.UNREAL_PAK:
+                    unpacker = UnrealPakUnpacker()
+                elif fmt == GameFormat.GODOT_PCK:
+                    unpacker = GodotPckUnpacker()
+                elif fmt == GameFormat.CATSYSTEM2_GAX:
+                    unpacker = GaxUnpacker()
+                elif fmt == GameFormat.GENERIC_7ZIP:
+                    unpacker = SevenZipUnpacker()
                 elif fmt == GameFormat.UNKNOWN and UNITY_AVAILABLE:
-                    # Пробуем Unity — может это Unity-файл
                     unpacker = UnityUnpacker()
                 elif UNITY_AVAILABLE:
                     unpacker = UnityUnpacker()
@@ -98,6 +134,7 @@ class ExtractThread(QThread):
                     sanitize_names=self.sanitize_names,
                     continue_on_error=self.continue_on_error,
                     use_long_paths=self.use_long_paths,
+                    game_exe_path=self.game_exe_path,
                 )
                 self._extractor = unpacker
                 result = self._extractor.unpack(
@@ -109,9 +146,19 @@ class ExtractThread(QThread):
                 if result.skipped:
                     total_skipped += len(result.skipped)
                     self.skipped.emit(total_skipped)
+                if result.warnings:
+                    for warn in result.warnings:
+                        self.warning.emit(
+                            f"{os.path.basename(rpa_path)}: {warn}"
+                        )
                 if result.errors:
                     for err in result.errors:
                         self.error.emit(f"{os.path.basename(rpa_path)}: {err}")
+
+                # Если есть .gax файлы и exe не указан — сигнализируем ОДИН раз
+                if (self._has_gax and not self.game_exe_path
+                        and fmt == GameFormat.CATSYSTEM2_GAX):
+                    self.needs_exe.emit(os.path.basename(rpa_path))
             except RpaError as e:
                 self.error.emit(f"{os.path.basename(rpa_path)}: {e}")
             except Exception as e:
@@ -240,7 +287,17 @@ class DropZone(QLabel):
                 if not os.path.isfile(p):
                     continue
                 pl = p.lower()
-                if pl.endswith('.rpa') or pl.endswith(('.assets', '.bundle', '.unity3d', '.resS', '.resource')):
+                # Поддерживаемые расширения игровых архивов
+                if pl.endswith('.rpa') \
+                        or pl.endswith('.xp3') \
+                        or pl.endswith(('.assets', '.bundle', '.unity3d', '.resS', '.resource')) \
+                        or pl.endswith(('.rgssad', '.rgss2a', '.rgss3a')) \
+                        or pl.endswith(('.rpgmvp', '.rpgmvo', '.rpgmvm')) \
+                        or pl.endswith('.wolf') \
+                        or pl.endswith('.ttarch') \
+                        or pl.endswith('.pak') \
+                        or pl.endswith('.pck') \
+                        or pl.endswith('.gax'):
                     if p not in self.parent()._rpa_files:
                         self.parent()._rpa_files.append(p)
                         added += 1
@@ -250,6 +307,11 @@ class DropZone(QLabel):
             self.parent()._extract_btn.setEnabled(len(self.parent()._rpa_files) > 0)
             self.parent()._status_label.setText(f'Добавлено файлов: {added}')
 
+        # Если добавлены .gax файлы без exe — уведомляем
+        has_gax = any(f.lower().endswith('.gax') for f in self.parent()._rpa_files)
+        if has_gax and not self.parent()._game_exe_path:
+            self.parent()._show_gax_hint()
+
 
 class MainWindow(QWidget):
     def __init__(self):
@@ -258,6 +320,8 @@ class MainWindow(QWidget):
         self._output_dir = ''
         self._extract_thread: Optional[ExtractThread] = None
         self._pending_output_dir = ''
+        self._game_exe_path: str = ''
+        self._gax_hint_shown = False
         self._setup_ui()
         self._setup_i18n()
         self._restore_settings()
@@ -330,6 +394,23 @@ class MainWindow(QWidget):
         folder_layout.addWidget(self._scan_path_btn)
         main_layout.addLayout(folder_layout)
 
+        # EXE для .gax (CatSystem2) — опциональное поле
+        exe_layout = QHBoxLayout()
+        self._exe_label = QLabel(i18n.t('exe.label'))
+        exe_layout.addWidget(self._exe_label)
+        self._exe_edit = QLineEdit()
+        self._exe_edit.setPlaceholderText(i18n.t('exe.placeholder'))
+        self._exe_edit.textChanged.connect(self._on_exe_changed)
+        exe_layout.addWidget(self._exe_edit)
+        self._exe_btn = QPushButton(i18n.t('exe.choose'))
+        self._exe_btn.clicked.connect(self._browse_exe)
+        self._exe_btn.setToolTip(i18n.t('exe.tip'))
+        exe_layout.addWidget(self._exe_btn)
+        self._exe_clear_btn = QPushButton(i18n.t('exe.clear'))
+        self._exe_clear_btn.clicked.connect(self._clear_exe)
+        exe_layout.addWidget(self._exe_clear_btn)
+        main_layout.addLayout(exe_layout)
+
         lang_layout = QHBoxLayout()
         lang_layout.addStretch()
         self._lang_combo = QComboBox()
@@ -388,6 +469,11 @@ class MainWindow(QWidget):
             self._folder_btn.setText(i18n.t('folder.choose'))
             self._scan_path_btn.setText(i18n.t('folder.scan_path'))
             self._scan_path_btn.setToolTip(i18n.t('folder.scan_path_tip'))
+            self._exe_label.setText(i18n.t('exe.label'))
+            self._exe_btn.setText(i18n.t('exe.choose'))
+            self._exe_btn.setToolTip(i18n.t('exe.tip'))
+            self._exe_clear_btn.setText(i18n.t('exe.clear'))
+            self._exe_edit.setPlaceholderText(i18n.t('exe.placeholder'))
             self._extract_btn.setText(i18n.t('extract.button'))
             self._cancel_btn.setText(i18n.t('cancel.button'))
             self._open_folder_btn.setText(i18n.t('open.folder'))
@@ -409,6 +495,11 @@ class MainWindow(QWidget):
             self._output_dir = last_folder
             self._folder_edit.setText(last_folder)
 
+        last_exe = settings.value('lastExe', '')
+        if last_exe and os.path.isfile(last_exe):
+            self._game_exe_path = last_exe
+            self._exe_edit.setText(last_exe)
+
     def set_rpa_file(self, filepath: str) -> None:
         if filepath not in self._rpa_files:
             self._rpa_files.append(filepath)
@@ -424,6 +515,45 @@ class MainWindow(QWidget):
 
     def _on_folder_changed(self, text: str) -> None:
         self._output_dir = text
+
+    def _on_exe_changed(self, text: str) -> None:
+        self._game_exe_path = text.strip()
+
+    def _browse_exe(self) -> None:
+        """Открывает диалог выбора .exe игры (для расшифровки .gax)."""
+        start_dir = ''
+        if self._game_exe_path and os.path.isfile(self._game_exe_path):
+            start_dir = os.path.dirname(self._game_exe_path)
+        elif self._rpa_files:
+            start_dir = os.path.dirname(self._rpa_files[0])
+
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            i18n.t('exe.choose'),
+            start_dir,
+            i18n.t('exe.filter') + ';;All files (*.*)',
+        )
+        if filepath:
+            self._game_exe_path = filepath
+            self._exe_edit.setText(filepath)
+            settings.setValue('lastExe', filepath)
+
+    def _clear_exe(self) -> None:
+        """Очищает поле exe."""
+        self._game_exe_path = ''
+        self._exe_edit.clear()
+        settings.setValue('lastExe', '')
+
+    def _show_gax_hint(self) -> None:
+        """Показывает подсказку про exe для .gax (один раз за сессию)."""
+        if self._gax_hint_shown:
+            return
+        self._gax_hint_shown = True
+        QMessageBox.information(
+            self,
+            i18n.t('gax.hint_title'),
+            i18n.t('gax.hint_message'),
+        )
 
     def _on_file_label_clicked_empty(self) -> None:
         """Клик когда нет выбранных файлов."""
@@ -527,11 +657,21 @@ class MainWindow(QWidget):
             start_dir = os.path.dirname(self._rpa_files[0])
         filepaths, _ = QFileDialog.getOpenFileNames(
             self,
-            'Select archive files (.rpa, .assets, .bundle, .unity3d, .resource)',
+            'Select archive files',
             start_dir,
-            'Archive files (*.rpa *.assets *.bundle *.unity3d *.resource *.resS);;'
+            'Archive files (*.rpa *.xp3 *.assets *.bundle *.unity3d *.resource *.resS '
+            '*.rgssad *.rgss2a *.rgss3a *.rpgmvp *.rpgmvo *.rpgmvm *.wolf *.ttarch '
+            '*.pak *.pck *.gax);;'
             'RenPy archives (*.rpa);;'
+            'KiriKiri archives (*.xp3);;'
             'Unity assets (*.assets *.bundle *.unity3d);;'
+            'RPG Maker MV/MZ (*.rpgmvp *.rpgmvo *.rpgmvm);;'
+            'RPG Maker XP/VX (*.rgssad *.rgss2a *.rgss3a);;'
+            'Wolf RPG Editor (*.wolf);;'
+            'Telltale (*.ttarch);;'
+            'Unreal Engine (*.pak);;'
+            'Godot Engine (*.pck);;'
+            'CatSystem2 (*.gax);;'
             'All files (*.*)'
         )
         for filepath in filepaths:
@@ -545,6 +685,11 @@ class MainWindow(QWidget):
                 self._output_dir = os.path.commonpath(self._rpa_files)
             self._folder_edit.setText(self._output_dir)
         self._extract_btn.setEnabled(len(self._rpa_files) > 0)
+
+        # Если добавлены .gax без exe — уведомляем
+        has_gax = any(f.lower().endswith('.gax') for f in self._rpa_files)
+        if has_gax and not self._game_exe_path:
+            self._show_gax_hint()
 
     def _browse_folder(self) -> None:
         start_dir = self._output_dir if self._output_dir else ''
@@ -733,6 +878,7 @@ class MainWindow(QWidget):
             sanitize_names=self._sanitize_chk.isChecked(),
             continue_on_error=self._continue_chk.isChecked(),
             use_long_paths=self._long_paths_chk.isChecked(),
+            game_exe_path=self._game_exe_path or None,
         )
         self._extract_thread.progress.connect(self._on_progress)
         self._extract_thread.file_progress.connect(self._on_file_progress)
@@ -740,6 +886,8 @@ class MainWindow(QWidget):
         self._extract_thread.skipped.connect(self._on_skipped)
         self._extract_thread.finished.connect(self._on_finished)
         self._extract_thread.error.connect(self._on_error)
+        self._extract_thread.warning.connect(self._on_warning)
+        self._extract_thread.needs_exe.connect(self._on_needs_exe)
         self._extract_thread.start()
 
     def _cancel_extract(self) -> None:
@@ -747,6 +895,20 @@ class MainWindow(QWidget):
             self._extract_thread.cancel()
             self._extract_thread.wait()
         self._on_cancelled()
+
+    def _on_warning(self, message: str) -> None:
+        """Показывает warning в статус-баре (без блокировки UI)."""
+        # Ограничиваем длину чтобы не забивать UI
+        msg = message if len(message) <= 200 else message[:200] + '...'
+        self._status_label.setText(f'⚠ {msg}')
+
+    def _on_needs_exe(self, filename: str) -> None:
+        """Показывает уведомление что .gax файлы требуют exe игры."""
+        QMessageBox.warning(
+            self,
+            i18n.t('gax.needs_exe_title'),
+            i18n.t('gax.needs_exe_message', filename),
+        )
 
     def _on_progress(self, filename: str, current: int, total: int) -> None:
         self._progress_bar.setMaximum(total)

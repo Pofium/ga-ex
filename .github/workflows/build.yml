@@ -26,10 +26,10 @@ jobs:
 
       - name: Create release archive
         run: |
-          Compress-Archive -Path dist/RPAExtractor.exe -DestinationPath RPAExtractor-${{ github.ref_name }}-windows.zip -Force
+          Compress-Archive -Path dist/GAExtractor.exe -DestinationPath GAExtractor-${{ github.ref_name }}-windows.zip -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RPAExtractor-windows
-          path: RPAExtractor-*.zip
+          name: GAExtractor-windows
+          path: GAExtractor-*.zip

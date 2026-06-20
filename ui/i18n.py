@@ -40,9 +40,31 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'opt.sanitize': 'Заменять недопустимые символы',
         'opt.long_paths': 'Поддержка длинных путей Windows',
         'opt.continue_on_error': 'Продолжать при ошибках',
+        'exe.label': 'EXE (для .gax):',
+        'exe.placeholder': 'Опционально: путь к exe игры CatSystem2',
+        'exe.choose': 'Обзор...',
+        'exe.tip': 'Путь к exe игры CatSystem2 для автоматического извлечения ключа расшифровки .gax',
+        'exe.clear': 'Очистить',
+        'exe.filter': 'Executable files (*.exe)',
+        'gax.hint_title': 'Файлы .gax обнаружены',
+        'gax.hint_message': (
+            'Обнаружены файлы .gax (CatSystem2).\n\n'
+            'Для расшифровки .gax может потребоваться exe игры — '
+            'ключ шифрования хранится в нём.\n\n'
+            'Укажите путь к exe игры в поле "EXE (для .gax)" ниже.\n'
+            'Без exe файлы будут сохранены как .bin (без расшифровки).'
+        ),
+        'gax.needs_exe_title': 'Для .gax требуется exe',
+        'gax.needs_exe_message': (
+            'Не удалось расшифровать файлы .gax без exe игры.\n\n'
+            'Обработанный файл: {0}\n\n'
+            'Укажите путь к exe игры CatSystem2 в поле "EXE (для .gax)" '
+            'и повторите распаковку.\n\n'
+            'Без exe файлы сохранены как .bin.'
+        ),
     },
     'en': {
-        'window.title': 'RPA Extractor',
+        'window.title': 'GA Extractor',
         'drop.hint': 'Drop .rpa, .assets, .bundle (Unity) or game folder',
         'file.label': 'File:',
         'file.browse': 'Browse...',
@@ -78,6 +100,28 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'opt.sanitize': 'Sanitize invalid characters',
         'opt.long_paths': 'Windows long path support',
         'opt.continue_on_error': 'Continue on errors',
+        'exe.label': 'EXE (for .gax):',
+        'exe.placeholder': 'Optional: path to CatSystem2 game exe',
+        'exe.choose': 'Browse...',
+        'exe.tip': 'Path to CatSystem2 game exe for automatic .gax decryption key extraction',
+        'exe.clear': 'Clear',
+        'exe.filter': 'Executable files (*.exe)',
+        'gax.hint_title': '.gax files detected',
+        'gax.hint_message': (
+            '.gax files (CatSystem2) detected.\n\n'
+            'Decrypting .gax may require the game exe — '
+            'the encryption key is embedded in it.\n\n'
+            'Specify the path to the game exe in the "EXE (for .gax)" field below.\n'
+            'Without the exe, files will be saved as .bin (not decrypted).'
+        ),
+        'gax.needs_exe_title': 'EXE required for .gax',
+        'gax.needs_exe_message': (
+            'Could not decrypt .gax files without the game exe.\n\n'
+            'Processed file: {0}\n\n'
+            'Specify the path to the CatSystem2 game exe in '
+            '"EXE (for .gax)" field and retry.\n\n'
+            'Without exe, files were saved as .bin.'
+        ),
     },
 }
 
