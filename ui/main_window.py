@@ -36,6 +36,7 @@ class ExtractThread(QThread):
     current_file = Signal(str)
     skipped = Signal(int)
     needs_exe = Signal(str)  # Сигнал: для .gax нужен exe
+    cs2_summary = Signal(int, int)  # Сигнал: (decrypted_count, failed_count) для .gax
 
     def __init__(
         self,
@@ -57,6 +58,9 @@ class ExtractThread(QThread):
         self._has_gax = any(
             f.lower().endswith('.gax') for f in rpa_files
         )
+        # Статистика CS2 для popup-итога
+        self._cs2_decrypted = 0
+        self._cs2_failed = 0
 
     def run(self):
         all_extracted = []
@@ -146,6 +150,20 @@ class ExtractThread(QThread):
                 if result.skipped:
                     total_skipped += len(result.skipped)
                     self.skipped.emit(total_skipped)
+
+                # Считаем статистику CS2 .gax для итогового popup
+                if fmt == GameFormat.CATSYSTEM2_GAX:
+                    fe = result.files_extracted
+                    # Успех = algorithm содержит не 'raw'
+                    has_success = any(
+                        f.get('algorithm', '') != 'raw'
+                        for f in fe
+                    )
+                    if has_success:
+                        self._cs2_decrypted += 1
+                    else:
+                        self._cs2_failed += 1
+
                 if result.warnings:
                     for warn in result.warnings:
                         self.warning.emit(
@@ -163,6 +181,10 @@ class ExtractThread(QThread):
                 self.error.emit(f"{os.path.basename(rpa_path)}: {e}")
             except Exception as e:
                 self.error.emit(f"{os.path.basename(rpa_path)}: Unexpected error: {e}")
+
+        # Итог по CS2 .gax — если были .gax, показываем popup
+        if self._cs2_decrypted or self._cs2_failed:
+            self.cs2_summary.emit(self._cs2_decrypted, self._cs2_failed)
 
         self.finished.emit(all_extracted)
 
@@ -888,6 +910,7 @@ class MainWindow(QWidget):
         self._extract_thread.error.connect(self._on_error)
         self._extract_thread.warning.connect(self._on_warning)
         self._extract_thread.needs_exe.connect(self._on_needs_exe)
+        self._extract_thread.cs2_summary.connect(self._on_cs2_summary)
         self._extract_thread.start()
 
     def _cancel_extract(self) -> None:
@@ -908,6 +931,24 @@ class MainWindow(QWidget):
             self,
             i18n.t('gax.needs_exe_title'),
             i18n.t('gax.needs_exe_message', filename),
+        )
+
+    def _on_cs2_summary(self, decrypted: int, failed: int) -> None:
+        """Показывает итог расшифровки CS2 .gax файлов в конце распаковки."""
+        total = decrypted + failed
+        if failed == 0:
+            # Всё OK — никаких уведомлений
+            return
+        if decrypted == 0:
+            # Полный провал
+            msg = i18n.t('gax.summary.all_failed', total)
+        else:
+            msg = i18n.t('gax.summary.partial', decrypted, total)
+
+        QMessageBox.warning(
+            self,
+            i18n.t('gax.summary_title'),
+            msg,
         )
 
     def _on_progress(self, filename: str, current: int, total: int) -> None:

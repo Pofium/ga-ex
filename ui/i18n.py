@@ -62,6 +62,26 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
             'и повторите распаковку.\n\n'
             'Без exe файлы сохранены как .bin.'
         ),
+        'gax.summary_title': 'Итог расшифровки .gax',
+        'gax.summary.all_failed': (
+            'Не удалось расшифровать ни один из {0} .gax файлов.\n\n'
+            'CatSystem2 использует сложное per-game XOR-шифрование. '
+            'GAExtractor попробовал 8 стандартных алгоритмов и извлечение '
+            'ключа из указанного exe — безуспешно для этой конкретной игры.\n\n'
+            'Файлы сохранены как .bin.\n\n'
+            'Для полной расшифровки используйте специализированные инструменты:\n'
+            '  • crass (https://github.com/KatyushaScarlet/crass)\n'
+            '  • arc_conv\n'
+            '  • Galatea\n'
+            '  • ExtractData'
+        ),
+        'gax.summary.partial': (
+            'Расшифровано {0} из {1} .gax файлов.\n\n'
+            'Остальные файлы сохранены как .bin.\n'
+            'CatSystem2 использует сложное per-game шифрование — '
+            'возможно, для этой игры требуется специализированный инструмент '
+            '(crass, arc_conv, Galatea).'
+        ),
     },
     'en': {
         'window.title': 'GA Extractor',
@@ -121,6 +141,26 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
             'Specify the path to the CatSystem2 game exe in '
             '"EXE (for .gax)" field and retry.\n\n'
             'Without exe, files were saved as .bin.'
+        ),
+        'gax.summary_title': '.gax decryption summary',
+        'gax.summary.all_failed': (
+            'Failed to decrypt any of {0} .gax files.\n\n'
+            'CatSystem2 uses complex per-game XOR encryption. '
+            'GAExtractor tried 8 standard algorithms and key extraction '
+            'from the specified exe — unsuccessfully for this particular game.\n\n'
+            'Files were saved as .bin.\n\n'
+            'For full decryption use specialized tools:\n'
+            '  • crass (https://github.com/KatyushaScarlet/crass)\n'
+            '  • arc_conv\n'
+            '  • Galatea\n'
+            '  • ExtractData'
+        ),
+        'gax.summary.partial': (
+            'Decrypted {0} of {1} .gax files.\n\n'
+            'The rest are saved as .bin.\n'
+            'CatSystem2 uses complex per-game encryption — '
+            'this game may require a specialized tool '
+            '(crass, arc_conv, Galatea).'
         ),
     },
 }

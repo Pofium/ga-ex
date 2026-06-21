@@ -247,15 +247,20 @@ class GaxUnpacker(BaseUnpacker):
                 if options.game_exe_path:
                     # exe был указан, но ключ не сработал
                     msg = (
-                        f'{os.path.basename(target)}: ключ из exe не подошёл. '
-                        f'Файл сохранён как .bin для ручного анализа.'
+                        f'{os.path.basename(target)}: '
+                        f'не удалось расшифровать (CatSystem2 использует '
+                        f'per-game XOR-ключ, который не удалось извлечь '
+                        f'из exe). Файл сохранён как .bin. '
+                        f'Используйте crass / arc_conv / Galatea для '
+                        f'полной расшифровки этой игры.'
                     )
                 else:
                     msg = (
-                        f'{os.path.basename(target)}: не удалось расшифровать '
-                        f'(попробованы 8 алгоритмов). '
-                        f'Укажите путь к exe игры CatSystem2 для извлечения ключа. '
-                        f'Файл сохранён как .bin.'
+                        f'{os.path.basename(target)}: '
+                        f'не удалось расшифровать (попробованы 8 стандартных '
+                        f'алгоритмов). Укажите путь к exe игры CatSystem2 '
+                        f'в поле "EXE (для .gax)" — будет выполнена попытка '
+                        f'извлечения ключа. Файл сохранён как .bin.'
                     )
                 result.warnings.append(msg)
 

@@ -18,7 +18,7 @@
 | **KiriKiri** | `.xp3` | ✅ Полная |
 | **RPG Maker XP/VX/VX Ace** | `.rgssad`, `.rgss2a`, `.rgss3a` | ✅ Полная |
 | **RPG Maker MV/MZ** | `.rpgmvp`, `.rpgmvo`, `.rpgmvm`, `.png_`, `.ogg_`, `.m4a_` | ✅ Полная (с ключом) |
-| **CatSystem2** | `.gax`, `.pck` | ⚠️ Детект + расшифровка (с exe игры) |
+| **CatSystem2** | `.gax`, `.pck` | ⚠️ Частично (см. ниже) |
 | **Telltale** | `.ttarch` | 🔍 Детект |
 | **Wolf RPG Editor** | `.wolf` | 🔍 Детект |
 | **Unreal Engine** | `.pak` | 🔍 Детект |
@@ -29,8 +29,11 @@
 
 - **Поддержка Drag&Drop**: перетаскивайте файлы или папки прямо в окно.
 - **Автодетект папки с игрой**: кнопка «Папка» сканирует директорию.
-- **Поле EXE для .gax**: для расшифровки CatSystem2 укажите путь к exe игры —
-  ключ будет извлечён автоматически по маркерам `CatScene` / `CatSystem2`.
+- **Поле EXE для .gax**: опционально. Укажите путь к exe игры — GAExtractor попробует
+  извлечь ключ шифрования по маркерам CS2. **Важно:** CatSystem2 использует
+  per-game шифрование; для некоторых игр (например, *Kabe no Mukou no Tsuma no Koe 3*)
+  смещение ключа в exe захардкожено и не может быть найдено универсально — см. раздел
+  «Расшифровка CatSystem2 .gax» ниже.
 - **GUI и CLI**: используйте GUI для удобства, CLI для автоматизации.
 - **Mass extraction**: распаковка нескольких архивов в один запуск.
 - **Long path support (Windows)**: обход лимита 260 символов через `\\?\` префикс.
@@ -118,9 +121,11 @@ from games built with various engines, with both GUI and CLI.
 
 - **Drag&Drop support**: drop files or game folders directly into the window.
 - **Folder auto-detect**: "Folder" button scans a directory and finds all archives.
-- **EXE field for .gax**: to decrypt CatSystem2 archives, specify the path to the
-  game exe — the key will be extracted automatically by searching for `CatScene`
-  / `CatSystem2` markers.
+- **EXE field for .gax**: optional. Specify the path to the game exe — GAExtractor
+  will try to extract the encryption key by searching for CS2 markers. **Note:**
+  CatSystem2 uses per-game encryption; for some games (e.g. *Kabe no Mukou no
+  Tsuma no Koe 3*) the key offset in the exe is hardcoded and cannot be found
+  generically — see "CatSystem2 .gax decryption" below for details.
 - **GUI and CLI**: use GUI for convenience, CLI for automation.
 - **Mass extraction**: unpack multiple archives in a single run.
 - **Long path support (Windows)**: bypass 260-char path limit via `\\?\` prefix.
@@ -186,12 +191,37 @@ Output: `dist/GAExtractor.exe` (~280 MB, standalone).
 ## CatSystem2 .gax decryption
 
 `.gax` is a proprietary encrypted image format used by CatSystem2 visual novels.
-The encryption key is hardcoded in the game executable. To decrypt:
+The encryption uses a per-game XOR key that is **hardcoded in the game executable**.
+
+### Supported workflow
 
 1. Find the game exe (e.g. `Game.exe` in the game folder).
 2. In GAExtractor GUI: enter the path in the **EXE (for .gax)** field.
-3. Click **Extract**. The key will be detected by searching for CS2 markers
-   (`CatScene`, `CatSystem2`, `.int`, `.gax`) in the exe.
+3. Click **Extract**. GAExtractor searches for CS2 markers (`.gax`, `.pck`, `.int`,
+   `RENDER_TEX`, Japanese strings) and tries to extract a 32-bit key candidate,
+   then validates it against actual `.gax` files in the folder.
 
-If the key cannot be extracted automatically, the file will be saved as `.bin`
-for manual analysis.
+### Known limitation
+
+CatSystem2 encryption is **per-game**: each game stores its key at a different
+hardcoded offset inside the exe. For some games (e.g. *Kabe no Mukou no Tsuma
+no Koe 3*, *Wall.exe*) the key offset is not near any CS2 string and cannot be
+found generically — it requires manual reverse engineering of the specific exe.
+
+When decryption fails, GAExtractor:
+
+- saves the file as `.bin` (the raw encrypted bytes) for manual analysis;
+- shows a popup at the end of extraction summarising how many files were
+  decrypted vs. failed, with suggestions for external tools.
+
+### Recommended external tools for unsupported games
+
+If GAExtractor cannot decrypt a particular CS2 game, use one of these
+specialised tools (they have per-game key offset databases built-in):
+
+- **[crass](https://github.com/KatyushaScarlet/crass)** — Ciri's CS2/arc
+  unpacker, supports many engines including CatSystem2.
+- **[arc_conv](http://www.vector.co.jp/soft/dl/win95/art/se475839.html)** —
+  Japanese archive converter with CatSystem2 plugin.
+- **[Galatea](https://github.com/vn-tools/galatea)** — VN archive extractor.
+- **ExtractData** — generic VN asset extractor.

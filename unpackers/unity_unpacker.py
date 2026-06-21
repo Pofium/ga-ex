@@ -1,10 +1,11 @@
 """Распаковщик Unity-ассетов через UnityPy."""
 import os
+import re
 import sys
 import tempfile
 import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
-from typing import Optional, List, Set, Tuple
+from typing import Optional, List, Set, Tuple, Dict
 
 from core.base_unpacker import BaseUnpacker, UnpackOptions, UnpackResult, ProgressCallback
 
@@ -23,6 +24,31 @@ EXPORTABLE_TYPES = {
     'MovieTexture': 'mp4',
     'Shader': 'shader',
 }
+
+# Папка для ассетов, не привязанных ни к одной сцене
+UNREFERENCED_DIR = '_Unreferenced'
+
+# Папка для ассетов, используемых в нескольких сценах
+COMMON_DIR = '_Common'
+
+# Регулярка для MD5-хеша (32 hex chars)
+_MD5_RE = re.compile(r'^[0-9a-f]{32}$', re.IGNORECASE)
+
+
+def _is_sane_filename(name: str) -> bool:
+    """Проверяет, годится ли m_Name в качестве имени файла.
+
+    Returns False для пустых имён, MD5-хешей, имён с запрещёнными символами.
+    """
+    if not name:
+        return False
+    # MD5-хеш бесполезен как имя файла
+    if _MD5_RE.match(name):
+        return False
+    # Слишком длинные имена
+    if len(name) > 100:
+        return False
+    return True
 
 # Таймаут на экспорт одного объекта (секунды)
 PER_OBJECT_TIMEOUT = 10
@@ -99,6 +125,155 @@ class UnityUnpacker(BaseUnpacker):
             'file_size': os.path.getsize(target),
         }
 
+    @staticmethod
+    def _build_scene_index(game_dir: str) -> Dict:
+        """Строит индекс сцен по level-файлам.
+
+        Возвращает dict:
+          {
+            'scene_names': {level_filename: scene_name, ...},
+            'obj_to_scenes': {path_id: set(scene_names), ...},
+          }
+
+        Если game_dir не содержит globalgamemanagers или level-файлов,
+        возвращает {'scene_names': {}, 'obj_to_scenes': {}}.
+        """
+        result = {'scene_names': {}, 'obj_to_scenes': {}}
+        if not game_dir or not os.path.isdir(game_dir):
+            return result
+
+        UnityPy = _check_unitypy()
+
+        # 1. Парсим globalgamemanagers → имена сцен для каждого level-файла
+        ggm_path = os.path.join(game_dir, 'globalgamemanagers')
+        scene_names = {}
+        if os.path.isfile(ggm_path):
+            try:
+                env = UnityPy.load(ggm_path)
+                for obj in env.objects:
+                    if obj.type.name == 'BuildSettings':
+                        try:
+                            tree = obj.read_typetree()
+                            # Формат зависит от версии Unity:
+                            # - Новый: m_Scenes — [{first: level_file, second: scene_name}, ...]
+                            # - Старый: scenes — ['Assets/.../SceneName.unity', ...]
+                            if 'm_Scenes' in tree and tree['m_Scenes']:
+                                for s in tree['m_Scenes']:
+                                    level_fname = s.get('first', '')
+                                    scene_name = s.get('second', '')
+                                    if level_fname and scene_name:
+                                        scene_names[level_fname] = scene_name
+                            elif 'scenes' in tree and tree['scenes']:
+                                # Старый формат: имена сцен берём из пути,
+                                # а level-файлы по порядку: level0, level1, ...
+                                for idx, scene_path in enumerate(tree['scenes']):
+                                    if not scene_path:
+                                        continue
+                                    scene_name = os.path.splitext(
+                                        os.path.basename(scene_path)
+                                    )[0]
+                                    level_fname = f'level{idx}'
+                                    scene_names[level_fname] = scene_name
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        result['scene_names'] = scene_names
+        if not scene_names:
+            return result
+
+        # 2. Для каждого level-файла собираем path_id всех Sprite/Texture2D refs
+        obj_to_scenes: Dict[int, Set[str]] = {}
+        for level_fname, scene_name in scene_names.items():
+            level_path = os.path.join(game_dir, level_fname)
+            if not os.path.isfile(level_path):
+                continue
+            try:
+                env = UnityPy.load(level_path)
+                for obj in env.objects:
+                    if obj.type.name == 'MonoBehaviour':
+                        try:
+                            tree = obj.read_typetree()
+                            # Рекурсивно ищем все PPtr (dict с m_PathID)
+                            def _collect_pptrs(node):
+                                if isinstance(node, dict):
+                                    pid = node.get('m_PathID')
+                                    if pid and pid != 0:
+                                        obj_to_scenes.setdefault(
+                                            pid, set()
+                                        ).add(scene_name)
+                                    for v in node.values():
+                                        _collect_pptrs(v)
+                                elif isinstance(node, list):
+                                    for v in node:
+                                        _collect_pptrs(v)
+                            _collect_pptrs(tree)
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+
+        result['obj_to_scenes'] = obj_to_scenes
+        return result
+
+    @staticmethod
+    def _resolve_subpath(
+        obj,
+        type_name: str,
+        scene_index: Optional[Dict],
+        obj_type_for_scene: str = 'Sprite',
+    ) -> str:
+        """Возвращает относительный подпуть для экспорта ассета.
+
+        Структура:
+          Scenes/<Scene>/<Type>/<filename>   — привязан к одной сцене
+          Scenes/_Common/<Type>/<filename>   — привязан к нескольким сценам
+          Scenes/_Unreferenced/<Type>/...    — не привязан ни к одной
+          <Type>/<filename>                  — для типов без scene-индекса
+
+        Sprite-ассеты ищутся по path_id; Texture2D-ассеты — по своему
+        собственному path_id (часто Sprite ссылается на Texture2D).
+        """
+        if not scene_index or obj.type.name not in ('Sprite', 'Texture2D'):
+            return type_name
+
+        scenes_for_obj = scene_index['obj_to_scenes'].get(obj.path_id)
+        if scenes_for_obj is None:
+            # Для Sprite попробуем найти по path_id через typetree — нет, проще
+            # через прямое попадание. Если ничего — Unreferenced.
+            return os.path.join('Scenes', UNREFERENCED_DIR, type_name)
+
+        if len(scenes_for_obj) == 1:
+            scene = next(iter(scenes_for_obj))
+            return os.path.join('Scenes', scene, type_name)
+        return os.path.join('Scenes', COMMON_DIR, type_name)
+
+    @staticmethod
+    def _make_filename(
+        obj, ext: str, m_name_override: Optional[str] = None,
+    ) -> str:
+        """Генерирует имя файла для ассета.
+
+        Приоритеты:
+          1. m_Name если он «адекватный» (не MD5, не пустой, не слишком длинный)
+          2. Type_PathID.ext
+        """
+        m_name = m_name_override
+        if m_name is None:
+            try:
+                data = obj.read()
+                m_name = getattr(data, 'm_Name', None)
+            except Exception:
+                m_name = None
+
+        if m_name and _is_sane_filename(m_name):
+            base = _sanitize_for_path(m_name)
+            if base:
+                return f'{base}.{ext}'
+
+        return f'{obj.type.name}_{obj.path_id}.{ext}'
+
     def unpack(
         self,
         target: str,
@@ -143,6 +318,25 @@ class UnityUnpacker(BaseUnpacker):
         os.makedirs(output_dir, exist_ok=True)
 
         result = UnpackResult(success=True, output_dir=output_dir)
+
+        # Строим scene-индекс по level-файлам (если target в Data/ — папка игры)
+        # Поищем globalgamemanagers в target_dir или его родителе (Data/...)
+        scene_index = None
+        try:
+            game_dir_candidate = os.path.dirname(os.path.abspath(target))
+            # Если target_dir — это Data/, ищем уровни там; иначе — в target_dir
+            if os.path.isfile(os.path.join(game_dir_candidate, 'globalgamemanagers')):
+                scene_index = self._build_scene_index(game_dir_candidate)
+            else:
+                # Возможно target в глубже — попробуем поискать уровни среди соседей
+                if any(
+                    fn.startswith('level') and fn[len('level'):].split('.')[0].isdigit()
+                    for fn in os.listdir(game_dir_candidate)
+                    if os.path.isfile(os.path.join(game_dir_candidate, fn))
+                ):
+                    scene_index = self._build_scene_index(game_dir_candidate)
+        except Exception:
+            scene_index = None
 
         # Создаём work_dir и копируем туда .resS/.resource (fmod toolkit их там ищет)
         try:
@@ -213,50 +407,44 @@ class UnityUnpacker(BaseUnpacker):
         skipped_count = total - len(exportable)
 
         def _export_one(obj) -> Tuple[str, str, Optional[str]]:
-            """Экспортирует один объект. Возвращает (filename, tname, error_msg)."""
+            """Экспортирует один объект. Возвращает (rel_filename, tname, error_msg)."""
             tname = obj.type.name
             ext = EXPORTABLE_TYPES[tname]
-            filename = f'{tname}_{obj.path_id}.{ext}'
+            type_subdir = self._type_subdir_name(tname)
+            subpath = self._resolve_subpath(obj, type_subdir, scene_index)
+            target_dir_for_obj = os.path.join(output_dir, subpath)
+            os.makedirs(target_dir_for_obj, exist_ok=True)
+            filename = self._make_filename(obj, ext)
 
             try:
                 if tname == 'Texture2D':
-                    self._export_texture(obj, filename, output_dir)
+                    self._export_texture(obj, filename, target_dir_for_obj)
                 elif tname == 'Sprite':
-                    self._export_sprite(obj, filename, output_dir)
+                    self._export_sprite(obj, filename, target_dir_for_obj)
                 elif tname == 'TextAsset':
-                    self._export_text(obj, filename, output_dir)
+                    self._export_text(obj, filename, target_dir_for_obj)
                 elif tname == 'AudioClip':
-                    self._export_audio(obj, filename, output_dir)
+                    self._export_audio(obj, filename, target_dir_for_obj)
                 elif tname == 'Mesh':
-                    self._export_mesh(obj, filename, output_dir)
+                    self._export_mesh(obj, filename, target_dir_for_obj)
                 elif tname == 'Font':
-                    self._export_font(obj, filename, output_dir)
+                    self._export_font(obj, filename, target_dir_for_obj)
                 elif tname in ('VideoClip', 'MovieTexture'):
-                    self._export_video(obj, filename, output_dir)
+                    self._export_video(obj, filename, target_dir_for_obj)
                 elif tname == 'Shader':
-                    self._export_shader(obj, filename, output_dir)
+                    self._export_shader(obj, filename, target_dir_for_obj)
                 elif tname == 'MonoBehaviour':
-                    self._export_monobehaviour(obj, filename, output_dir)
+                    self._export_monobehaviour(obj, filename, target_dir_for_obj)
                 elif tname == 'MonoScript':
-                    self._export_monoscript(obj, filename, output_dir)
+                    self._export_monoscript(obj, filename, target_dir_for_obj)
                 else:
                     return (filename, tname, 'unsupported type')
 
-                # Проверяем файл в любой подпапке (m_Name группирует в подпапку)
-                # Сначала ищем в output_dir/<filename>, потом в подпапках
-                full_path = os.path.join(output_dir, filename)
+                full_path = os.path.join(target_dir_for_obj, filename)
                 if not os.path.exists(full_path) or os.path.getsize(full_path) == 0:
-                    # Ищем в подпапках (scene_name)
-                    for entry in os.listdir(output_dir):
-                        subdir = os.path.join(output_dir, entry)
-                        if os.path.isdir(subdir):
-                            candidate = os.path.join(subdir, filename)
-                            if os.path.exists(candidate) and os.path.getsize(candidate) > 0:
-                                full_path = candidate
-                                break
-                    else:
-                        return (filename, tname, 'no data (empty or missing)')
-                return (os.path.basename(os.path.dirname(full_path)) + '/' + filename if os.path.dirname(full_path) != output_dir else filename, tname, None)
+                    return (filename, tname, 'no data (empty or missing)')
+                rel = os.path.join(subpath, filename) if subpath else filename
+                return (rel, tname, None)
             except Exception as e:
                 return (filename, tname, f'{type(e).__name__}: {e}')
 
@@ -273,9 +461,15 @@ class UnityUnpacker(BaseUnpacker):
                 futures = []
                 for obj in batch:
                     tname = obj.type.name
-                    filename = f'{tname}_{obj.path_id}.{EXPORTABLE_TYPES[tname]}'
+                    # Используем улучшенное имя файла для отображения прогресса
+                    try:
+                        display_name = self._make_filename(
+                            obj, EXPORTABLE_TYPES[tname]
+                        )
+                    except Exception:
+                        display_name = f'{tname}_{obj.path_id}.{EXPORTABLE_TYPES[tname]}'
                     future = executor.submit(_export_one, obj)
-                    futures.append((future, filename, tname))
+                    futures.append((future, display_name, tname))
 
                 # Собираем результаты батча
                 for future, filename, tname in futures:
@@ -305,6 +499,9 @@ class UnityUnpacker(BaseUnpacker):
                 'reason': 'skipped (not in supported types)',
             })
 
+        # Удаляем пустые папки, которые могли остаться после неудачного экспорта
+        self._cleanup_empty_dirs(output_dir)
+
         return result
 
     def cancel(self) -> None:
@@ -320,20 +517,49 @@ class UnityUnpacker(BaseUnpacker):
             safe_name = ''.join(c if c.isalnum() or c in '._-' else '_' for c in safe_name)
         return os.path.join(output_dir, safe_name)
 
+    @staticmethod
+    def _type_subdir_name(type_name: str) -> str:
+        """Возвращает имя подпапки для типа ассета.
+
+        В основном — это просто имя типа. Используется как корневая
+        папка для ассетов этого типа.
+        """
+        # Sprite → Sprites (множественное число для UX)
+        mapping = {
+            'Sprite': 'Sprites',
+            'Texture2D': 'Textures',
+            'AudioClip': 'Audio',
+            'MonoBehaviour': 'MonoBehaviours',
+            'MonoScript': 'Scripts',
+        }
+        return mapping.get(type_name, type_name)
+
+    def _cleanup_empty_dirs(self, root: str) -> None:
+        """Удаляет пустые подпапки в root (рекурсивно, снизу вверх)."""
+        try:
+            for dirpath, dirnames, filenames in os.walk(root, topdown=False):
+                # Пропускаем саму root
+                if os.path.normcase(dirpath) == os.path.normcase(root):
+                    continue
+                # Проверяем реальное состояние папки (после удаления детей dirnames
+                # может быть устаревшим, поэтому используем os.listdir)
+                try:
+                    actual = os.listdir(dirpath)
+                except OSError:
+                    continue
+                if not actual:
+                    try:
+                        os.rmdir(dirpath)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+
     def _export_texture(self, obj, filename: str, output_dir: str) -> None:
         try:
             data = obj.read()
         except Exception as e:
             raise RuntimeError(f'obj.read() failed: {type(e).__name__}: {e}')
-
-        # Иерархия: используем m_Name как подпапку (напр. 'loca_bathroom' = папка сцены)
-        scene_name = None
-        try:
-            m_name = getattr(data, 'm_Name', None)
-            if m_name:
-                scene_name = _sanitize_for_path(m_name)
-        except Exception:
-            pass
 
         # Некоторые текстуры имеют image=None (битые, или требуют fmod)
         img = getattr(data, 'image', None)
@@ -342,11 +568,7 @@ class UnityUnpacker(BaseUnpacker):
             try:
                 raw = getattr(data, 'image_data', None) or getattr(data, 'm_StreamData', None)
                 if raw:
-                    if scene_name:
-                        bin_path = os.path.join(output_dir, scene_name, filename + '.bin')
-                        os.makedirs(os.path.dirname(bin_path), exist_ok=True)
-                    else:
-                        bin_path = os.path.join(output_dir, filename + '.bin')
+                    bin_path = os.path.join(output_dir, filename + '.bin')
                     raw_bytes = bytes(raw) if not isinstance(raw, (bytes, bytearray)) else raw
                     with open(bin_path, 'wb') as f:
                         f.write(raw_bytes)
@@ -355,13 +577,7 @@ class UnityUnpacker(BaseUnpacker):
                 pass
             raise RuntimeError('Texture2D has no image (fmod missing or corrupt)')
 
-        if scene_name:
-            subdir = os.path.join(output_dir, scene_name)
-            os.makedirs(subdir, exist_ok=True)
-            path = os.path.join(subdir, filename)
-        else:
-            path = os.path.join(output_dir, filename)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        path = os.path.join(output_dir, filename)
         try:
             # fmod делает распаковку через временный файл — ставим TMPDIR на наш tempdir
             import tempfile
@@ -387,21 +603,8 @@ class UnityUnpacker(BaseUnpacker):
         img = getattr(data, 'image', None)
         if not img:
             raise RuntimeError('Sprite has no image (fmod missing or corrupt)')
-        # Иерархия: m_Name как подпапка
-        scene_name = None
-        try:
-            m_name = getattr(data, 'm_Name', None)
-            if m_name:
-                scene_name = _sanitize_for_path(m_name)
-        except Exception:
-            pass
-        if scene_name:
-            subdir = os.path.join(output_dir, scene_name)
-            os.makedirs(subdir, exist_ok=True)
-            path = os.path.join(subdir, filename)
-        else:
-            path = os.path.join(output_dir, filename)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        path = os.path.join(output_dir, filename)
         try:
             import tempfile
             old_tmp = os.environ.get('TMPDIR', None)
