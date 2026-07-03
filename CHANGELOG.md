@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.12.5 (2026-07-03) — UX: Chromium/Electron .pak clarification
+
+### Changed
+- [ui/main_window.py](file:///c:/Projects/rpa-ex/ui/main_window.py): если в папке нет поддерживаемых архивов, но есть признаки Electron/Chromium, сообщение объясняет что `*.pak` там не Unreal и подсказывает путь `resources\\app`.
+
 ## v0.12.4 (2026-07-03) — Hotfix: Majiro Arc folder scan
 
 ### Fixed

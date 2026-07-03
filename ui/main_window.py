@@ -807,17 +807,54 @@ class MainWindow(QWidget):
             pass
 
         if not info.assets:
-            # Соберём что ЕСТЬ в папке для отладки
             try:
                 items = os.listdir(folder)[:30]
             except Exception as e:
                 items = [f'ERROR: {e}']
+
+            extra = []
+            try:
+                locales_dir = os.path.join(folder, 'locales')
+                has_locales = os.path.isdir(locales_dir)
+                locales_pak_count = 0
+                if has_locales:
+                    try:
+                        locales_pak_count = sum(
+                            1 for n in os.listdir(locales_dir)
+                            if n.lower().endswith('.pak')
+                        )
+                    except Exception:
+                        locales_pak_count = 0
+
+                chromium_markers = [
+                    os.path.join(folder, 'resources.pak'),
+                    os.path.join(folder, 'chrome_100_percent.pak'),
+                    os.path.join(folder, 'chrome_200_percent.pak'),
+                    os.path.join(folder, 'icudtl.dat'),
+                    os.path.join(folder, 'LICENSES.chromium.html'),
+                ]
+                looks_like_chromium = any(os.path.exists(p) for p in chromium_markers) or locales_pak_count > 0
+                app_dir = os.path.join(folder, 'resources', 'app')
+                app_asar = os.path.join(folder, 'resources', 'app.asar')
+
+                if looks_like_chromium:
+                    extra.append(
+                        'Найдены *.pak Chromium/Electron (resources.pak / chrome_*.pak / locales/*.pak) — это не Unreal Engine .pak.'
+                    )
+                    if os.path.isdir(app_dir):
+                        extra.append(f'Файлы игры уже лежат в: {app_dir}')
+                    elif os.path.isfile(app_asar):
+                        extra.append(f'Найден app.asar: {app_asar}')
+            except Exception:
+                extra = []
+
             QMessageBox.information(
                 self,
                 'No archives found',
                 f'Не найдено архивов в:\n{folder}\n\n'
                 f'Рекурсивный поиск выполнен.\n'
-                f'Первые файлы в папке:\n' + '\n'.join(items[:15])
+                + ('\n'.join(extra) + '\n\n' if extra else '')
+                + f'Первые файлы в папке:\n' + '\n'.join(items[:15])
             )
             return
 
