@@ -321,6 +321,12 @@ class TestFormatDetectorExtended(unittest.TestCase):
             f.write(b'TTarch' + b'\x00' * 100)
         self.assertEqual(self.det.detect_file(path), GameFormat.TELLTALE_TTARCH)
 
+    def test_detect_majiro_arc(self):
+        path = os.path.join(self.tmpdir, 'data1.arc')
+        with open(path, 'wb') as f:
+            f.write(b'MajiroArcV3.000\x00' + b'\x00' * 100)
+        self.assertEqual(self.det.detect_file(path), GameFormat.MAJIRO_ARC)
+
     def test_detect_unreal_pak(self):
         path = os.path.join(self.tmpdir, 'game.pak')
         with open(path, 'wb') as f:
@@ -372,6 +378,15 @@ class TestFormatDetectorExtended(unittest.TestCase):
             f.write(encrypted)
         info = self.det.detect_folder(game)
         self.assertEqual(info.format, GameFormat.RPG_MAKER_MV)
+
+    def test_detect_folder_with_majiro_arc(self):
+        game = os.path.join(self.tmpdir, 'game_majiro')
+        os.makedirs(game)
+        with open(os.path.join(game, 'data1.arc'), 'wb') as f:
+            f.write(b'MajiroArcV3.000\x00' + b'\x00' * 100)
+        info = self.det.detect_folder(game)
+        self.assertEqual(info.format, GameFormat.MAJIRO_ARC)
+        self.assertEqual(len(info.assets), 1)
 
 
 class TestStubs(unittest.TestCase):

@@ -1,10 +1,17 @@
 # Changelog
 
+## v0.12.4 (2026-07-03) — Hotfix: Majiro Arc folder scan
+
+### Fixed
+- [core/detector.py](file:///c:/Projects/rpa-ex/core/detector.py): folder-scan/drag&drop папки теперь находит **Majiro Arc V3 (.arc)** (раньше .arc добавлялся только при выборе файла).
+
+### Changed
+- Убрано упоминание конкретной игры из changelog и текста релиза.
+
 ## v0.12.3 (2026-07-02) — Majiro Arc, Telltale, Wolf, Godot PCK
 
 ### Added
 - **Majiro Arc V3 (.arc)** — полная поддержка (Shift-JIS имена, 12-байтные записи)
-  - Протестировано на *Please Bang My Wife* (data1.arc, scenario.arc, arc*.arc)
   - 360 записей в data1.arc: `.rc8`, `.rct`, медиа-файлы
 - **Telltale (.ttarch)** — полная поддержка (T3GZ magic, zlib сжатие)
   - Парсинг object table с детекцией сжатых/несжатых объектов

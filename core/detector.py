@@ -231,6 +231,16 @@ class FormatDetector:
                         ))
                         total_size += size
                     continue
+                
+                # Majiro Arc V3
+                if fl.endswith('.arc'):
+                    fmt = self.detect_file(full_path)
+                    if fmt == GameFormat.MAJIRO_ARC:
+                        assets.append(AssetInfo(
+                            path=full_path, size=size, format=GameFormat.MAJIRO_ARC,
+                        ))
+                        total_size += size
+                    continue
 
                 # Unreal PAK
                 if fl.endswith('.pak'):
@@ -302,10 +312,11 @@ class FormatDetector:
         has_pck = any(a.format == GameFormat.GODOT_PCK for a in assets)
         has_gax = any(a.format == GameFormat.CATSYSTEM2_GAX for a in assets)
         has_wolf = any(a.format == GameFormat.WOLF_RPG for a in assets)
+        has_majiro = any(a.format == GameFormat.MAJIRO_ARC for a in assets)
 
         format_count = sum([
             has_rpa, has_unity, has_xp3, has_rpgm, has_ttarch,
-            has_pak, has_pck, has_gax, has_wolf,
+            has_majiro, has_pak, has_pck, has_gax, has_wolf,
         ])
         is_mixed = format_count > 1
 
@@ -321,6 +332,8 @@ class FormatDetector:
             )
         elif has_ttarch and not is_mixed:
             fmt = GameFormat.TELLTALE_TTARCH
+        elif has_majiro and not is_mixed:
+            fmt = GameFormat.MAJIRO_ARC
         elif has_pak and not is_mixed:
             fmt = GameFormat.UNREAL_PAK
         elif has_pck and not is_mixed:
