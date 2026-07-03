@@ -86,7 +86,24 @@ class FileSelectionDialog(QDialog):
     def _format_item(self, asset) -> str:
         """Форматирует строку для отображения в списке."""
         size_mb = asset.size / (1024 * 1024)
-        fmt_tag = '[RenPy]' if asset.format.value == 'renpy_rpa' else '[Unity]'
+        tags = {
+            'renpy_rpa': '[RenPy]',
+            'unity_asset': '[Unity]',
+            'kirikiri_xp3': '[XP3]',
+            'rpg_maker_rgssad': '[RGSS]',
+            'rpg_maker_rgss2a': '[RGSS]',
+            'rpg_maker_rgss3a': '[RGSS]',
+            'rpg_maker_mv': '[RPGM]',
+            'telltale_ttarch': '[TTarch]',
+            'wolf_rpg': '[Wolf]',
+            'unreal_pak': '[Unreal]',
+            'godot_pck': '[Godot]',
+            'catsystem2_gax': '[GAX]',
+            'generic_7zip': '[7z]',
+            'majiro_arc': '[Majiro]',
+            'electron_asar': '[ASAR]',
+        }
+        fmt_tag = tags.get(asset.format.value, '[Archive]')
         rel = os.path.basename(os.path.dirname(asset.path)) or '/'
         return f'{fmt_tag} {rel}/{os.path.basename(asset.path)} ({size_mb:.1f} MB)'
 

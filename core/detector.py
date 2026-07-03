@@ -22,6 +22,7 @@ class GameFormat(Enum):
     CATSYSTEM2_GAX = "catsystem2_gax"  # CatSystem2 .gax (戯画)
     GENERIC_7ZIP = "generic_7zip"  # 7-Zip fallback
     MAJIRO_ARC = "majiro_arc"  # Majiro Arc V3 .arc (японские VN)
+    ELECTRON_ASAR = "electron_asar"  # Electron app.asar
     MIXED = "mixed"  # одновременно несколько движков
 
 
@@ -140,6 +141,14 @@ class FormatDetector:
                    '.lzma', '.cab', '.iso', '.msi'):
             return GameFormat.GENERIC_7ZIP
 
+        # Electron app.asar
+        if ext == '.asar':
+            try:
+                from unpackers.asar_unpacker import ElectronAsarUnpacker
+                return GameFormat.ELECTRON_ASAR if ElectronAsarUnpacker.detect(filepath) else GameFormat.UNKNOWN
+            except Exception:
+                return GameFormat.UNKNOWN
+
         return GameFormat.UNKNOWN
 
     def detect_folder(self, folder: str) -> GameInfo:
@@ -231,6 +240,16 @@ class FormatDetector:
                         ))
                         total_size += size
                     continue
+
+                # Electron app.asar
+                if fl.endswith('.asar'):
+                    fmt = self.detect_file(full_path)
+                    if fmt == GameFormat.ELECTRON_ASAR:
+                        assets.append(AssetInfo(
+                            path=full_path, size=size, format=GameFormat.ELECTRON_ASAR,
+                        ))
+                        total_size += size
+                    continue
                 
                 # Majiro Arc V3
                 if fl.endswith('.arc'):
@@ -313,10 +332,11 @@ class FormatDetector:
         has_gax = any(a.format == GameFormat.CATSYSTEM2_GAX for a in assets)
         has_wolf = any(a.format == GameFormat.WOLF_RPG for a in assets)
         has_majiro = any(a.format == GameFormat.MAJIRO_ARC for a in assets)
+        has_asar = any(a.format == GameFormat.ELECTRON_ASAR for a in assets)
 
         format_count = sum([
             has_rpa, has_unity, has_xp3, has_rpgm, has_ttarch,
-            has_majiro, has_pak, has_pck, has_gax, has_wolf,
+            has_majiro, has_asar, has_pak, has_pck, has_gax, has_wolf,
         ])
         is_mixed = format_count > 1
 
@@ -334,6 +354,8 @@ class FormatDetector:
             fmt = GameFormat.TELLTALE_TTARCH
         elif has_majiro and not is_mixed:
             fmt = GameFormat.MAJIRO_ARC
+        elif has_asar and not is_mixed:
+            fmt = GameFormat.ELECTRON_ASAR
         elif has_pak and not is_mixed:
             fmt = GameFormat.UNREAL_PAK
         elif has_pck and not is_mixed:

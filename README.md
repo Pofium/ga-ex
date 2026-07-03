@@ -9,7 +9,7 @@
 **GA Extractor** (Game Archive Extractor) — это утилита для распаковки архивов
 ресурсов из игр на различных движках с графическим интерфейсом и CLI.
 
-### Поддерживаемые форматы (v0.12.0)
+### Поддерживаемые форматы (v0.12.6)
 
 | Движок | Расширения | Распаковка |
 |---|---|---|
@@ -22,6 +22,7 @@
 | **Telltale** | `.ttarch` | ✅ Полная (T3GZ, zlib) |
 | **Wolf RPG Editor** | `.wolf` | ✅ ZIP; WOLF raw (частично) |
 | **Majiro Arc** | `.arc` (`MajiroArcV3`) | ✅ Полная (v3, Shift-JIS) |
+| **Electron** | `resources\app.asar` | ✅ Полная (app.asar) |
 | **Unreal Engine** | `.pak` | ✅ Полная (v1-v12, Zlib/Gzip/Oodle/LZ4, AES*) |
 | **Godot Engine** | `.pck` | ✅ Полная (v0-v2, embedded EXE*) |
 | **7-Zip fallback** | `.7z`, `.zip`, `.rar`, `.tar`, `.gz`, `.bz2`, `.xz` | ✅ Полная (через 7z CLI) |
@@ -45,7 +46,7 @@
 
 ### Установка
 
-1. Скачайте `GAExtractor.exe` из [Releases](https://github.com/Pofium/rpa-ex/releases/tag/v0.12.0).
+1. Скачайте `GAExtractor.exe` из [Releases](https://github.com/Pofium/ga-ex/releases/latest).
 2. Запустите `GAExtractor.exe` — установка не требуется.
 
 > Опционально: для распаковки `.7z`, `.rar`, `.tar.gz` и других архивов установите [7-Zip](https://www.7-zip.org/).
@@ -102,7 +103,7 @@ pyinstaller ga_extractor.spec --clean
 **GA Extractor** (Game Archive Extractor) — utility for unpacking resource archives
 from games built with various engines, with both GUI and CLI.
 
-### Supported formats (v0.12.0)
+### Supported formats (v0.12.6)
 
 | Engine | Extensions | Unpacking |
 |---|---|---|
@@ -115,6 +116,7 @@ from games built with various engines, with both GUI and CLI.
 | **Telltale** | `.ttarch` | ✅ Full (T3GZ, zlib) |
 | **Wolf RPG Editor** | `.wolf` | ✅ ZIP; WOLF raw (partial) |
 | **Majiro Arc** | `.arc` (`MajiroArcV3`) | ✅ Full (v3, Shift-JIS) |
+| **Electron** | `resources\app.asar` | ✅ Full (app.asar) |
 | **Unreal Engine** | `.pak` | ✅ Full (v1-v12, Zlib/Gzip/Oodle/LZ4, AES*) |
 | **Godot Engine** | `.pck` | ✅ Full (v0-v2, embedded EXE*) |
 | **7-Zip fallback** | `.7z`, `.zip`, `.rar`, `.tar`, `.gz`, `.bz2`, `.xz` | ✅ Full (via 7z CLI) |

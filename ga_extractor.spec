@@ -43,6 +43,7 @@ a = Analysis(
         'unpackers.gax_unpacker',
         'unpackers.sevenzip_unpacker',
         'unpackers.majiro_unpacker',
+        'unpackers.asar_unpacker',
         'core.rpgm_decrypter',
         'core.rpgm_reader',
         'core.gax_key_extractor',

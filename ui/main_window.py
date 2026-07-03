@@ -14,7 +14,7 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon
 from core.extractor import (
     RpaUnpacker, Xp3Unpacker, RpgmUnpacker, TelltaleUnpacker,
     WolfUnpacker, UnrealPakUnpacker, GodotPckUnpacker, GaxUnpacker,
-    SevenZipUnpacker, MajiroArcUnpacker,
+    SevenZipUnpacker, MajiroArcUnpacker, ElectronAsarUnpacker,
 )
 from core.base_unpacker import UnpackOptions
 from core.detector import FormatDetector, GameFormat
@@ -102,9 +102,10 @@ class ExtractThread(QThread):
                     GameFormat.RPG_MAKER_RGSS3A, GameFormat.RPG_MAKER_MV,
                 )
                 is_7z = fmt == GameFormat.GENERIC_7ZIP
+                is_asar = fmt == GameFormat.ELECTRON_ASAR
 
-                # Unity/XP3/RPGM/7z — иерархия идёт изнутри архива
-                if is_unity or is_xp3 or is_rpgm or is_7z:
+                # Unity/XP3/RPGM/7z/ASAR — иерархия идёт изнутри архива
+                if is_unity or is_xp3 or is_rpgm or is_7z or is_asar:
                     file_output_dir = self.output_dir
                 if fmt == GameFormat.RENPY_RPA:
                     unpacker = RpaUnpacker()
@@ -125,6 +126,8 @@ class ExtractThread(QThread):
                     unpacker = GaxUnpacker()
                 elif fmt == GameFormat.MAJIRO_ARC:
                     unpacker = MajiroArcUnpacker()
+                elif fmt == GameFormat.ELECTRON_ASAR:
+                    unpacker = ElectronAsarUnpacker()
                 elif fmt == GameFormat.GENERIC_7ZIP:
                     unpacker = SevenZipUnpacker()
                 elif fmt == GameFormat.UNKNOWN and UNITY_AVAILABLE:
@@ -322,7 +325,8 @@ class DropZone(QLabel):
                         or pl.endswith('.pak') \
                         or pl.endswith('.pck') \
                         or pl.endswith('.gax') \
-                        or pl.endswith('.arc'):
+                        or pl.endswith('.arc') \
+                        or pl.endswith('.asar'):
                     if p not in self.parent()._rpa_files:
                         self.parent()._rpa_files.append(p)
                         added += 1
@@ -686,7 +690,7 @@ class MainWindow(QWidget):
             start_dir,
             'Archive files (*.rpa *.xp3 *.assets *.bundle *.unity3d *.resource *.resS '
             '*.rgssad *.rgss2a *.rgss3a *.rpgmvp *.rpgmvo *.rpgmvm *.wolf *.ttarch '
-            '*.pak *.pck *.gax *.arc);;'
+            '*.pak *.pck *.gax *.arc *.asar);;'
             'RenPy archives (*.rpa);;'
             'KiriKiri archives (*.xp3);;'
             'Unity assets (*.assets *.bundle *.unity3d);;'
@@ -698,6 +702,7 @@ class MainWindow(QWidget):
             'Godot Engine (*.pck);;'
             'CatSystem2 (*.gax);;'
             'Majiro Arc (*.arc);;'
+            'Electron app.asar (*.asar);;'
             'All files (*.*)'
         )
         for filepath in filepaths:

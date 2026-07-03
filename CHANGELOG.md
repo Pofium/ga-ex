@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.12.6 (2026-07-03) — Electron app.asar
+
+### Added
+- **Electron app.asar** — полная распаковка `resources\\app.asar` (извлечение файлов по JSON header).
+
+### Changed
+- [core/detector.py](file:///c:/Projects/rpa-ex/core/detector.py): добавлен детект `.asar` в file/folder scan.
+- [ui/main_window.py](file:///c:/Projects/rpa-ex/ui/main_window.py): `.asar` добавлен в drag&drop и file dialog.
+
 ## v0.12.5 (2026-07-03) — UX: Chromium/Electron .pak clarification
 
 ### Changed

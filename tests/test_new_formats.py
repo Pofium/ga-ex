@@ -1,5 +1,6 @@
 """Юнит-тесты для новых архивных форматов: RPG Maker, Telltale, Wolf, Unreal, Godot, GAX, 7-Zip."""
 import io
+import json
 import os
 import struct
 import sys
@@ -25,6 +26,7 @@ from unpackers.pak_unpacker import UnrealPakUnpacker
 from unpackers.godot_pck_unpacker import GodotPckUnpacker
 from unpackers.gax_unpacker import GaxUnpacker
 from unpackers.sevenzip_unpacker import SevenZipUnpacker
+from unpackers.asar_unpacker import ElectronAsarUnpacker
 from core.base_unpacker import UnpackOptions
 
 
@@ -86,6 +88,35 @@ def make_rgss1a(files):
         out.write(data)
 
     return out.getvalue()
+
+
+def make_asar(files):
+    header = {'files': {}}
+    data_blob = b''
+
+    def add_path(path, meta_root):
+        parts = path.split('/')
+        cur = meta_root
+        for part in parts[:-1]:
+            cur.setdefault(part, {'files': {}})
+            cur = cur[part]['files']
+        cur[parts[-1]] = {'size': len(files[path]), 'offset': str(len(data_blob))}
+
+    for p in sorted(files.keys()):
+        if '\\' in p:
+            raise ValueError('use forward slashes in make_asar()')
+        add_path(p, header['files'])
+        data_blob += files[p]
+
+    header_json = json.dumps(header, separators=(',', ':')).encode('utf-8')
+    header_pickle = struct.pack('<I', len(header_json)) + header_json
+    if len(header_pickle) % 4 != 0:
+        header_pickle += b'\x00' * (4 - (len(header_pickle) % 4))
+
+    header_size = len(header_pickle)
+    header_size_pickle = struct.pack('<II', 4, header_size)
+
+    return header_size_pickle + header_pickle + data_blob
 
 
 # ============ Tests ============
@@ -327,6 +358,12 @@ class TestFormatDetectorExtended(unittest.TestCase):
             f.write(b'MajiroArcV3.000\x00' + b'\x00' * 100)
         self.assertEqual(self.det.detect_file(path), GameFormat.MAJIRO_ARC)
 
+    def test_detect_electron_asar(self):
+        path = os.path.join(self.tmpdir, 'app.asar')
+        with open(path, 'wb') as f:
+            f.write(make_asar({'hello.txt': b'hello'}))
+        self.assertEqual(self.det.detect_file(path), GameFormat.ELECTRON_ASAR)
+
     def test_detect_unreal_pak(self):
         path = os.path.join(self.tmpdir, 'game.pak')
         with open(path, 'wb') as f:
@@ -386,6 +423,15 @@ class TestFormatDetectorExtended(unittest.TestCase):
             f.write(b'MajiroArcV3.000\x00' + b'\x00' * 100)
         info = self.det.detect_folder(game)
         self.assertEqual(info.format, GameFormat.MAJIRO_ARC)
+        self.assertEqual(len(info.assets), 1)
+
+    def test_detect_folder_with_electron_asar(self):
+        game = os.path.join(self.tmpdir, 'game_asar')
+        os.makedirs(game)
+        with open(os.path.join(game, 'app.asar'), 'wb') as f:
+            f.write(make_asar({'hello.txt': b'hello'}))
+        info = self.det.detect_folder(game)
+        self.assertEqual(info.format, GameFormat.ELECTRON_ASAR)
         self.assertEqual(len(info.assets), 1)
 
 
@@ -456,6 +502,30 @@ class TestStubs(unittest.TestCase):
             f.write(b'\x00' * 200)
         u = WolfUnpacker()
         self.assertTrue(u.detect(path))
+
+
+class TestElectronAsarUnpacker(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_unpack_basic(self):
+        path = os.path.join(self.tmpdir, 'app.asar')
+        with open(path, 'wb') as f:
+            f.write(make_asar({'dir/hello.txt': b'hello'}))
+
+        out = os.path.join(self.tmpdir, 'out')
+        os.makedirs(out, exist_ok=True)
+        u = ElectronAsarUnpacker()
+        r = u.unpack(path, UnpackOptions(output_dir=out))
+        self.assertTrue(r.success, msg=f'errors={r.errors}')
+        extracted = os.path.join(out, 'dir', 'hello.txt')
+        self.assertTrue(os.path.exists(extracted))
+        with open(extracted, 'rb') as rf:
+            self.assertEqual(rf.read(), b'hello')
 
 
 class TestGaxDecryption(unittest.TestCase):
