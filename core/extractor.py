@@ -16,6 +16,7 @@ from unpackers.pak_unpacker import UnrealPakUnpacker
 from unpackers.godot_pck_unpacker import GodotPckUnpacker
 from unpackers.gax_unpacker import GaxUnpacker
 from unpackers.sevenzip_unpacker import SevenZipUnpacker
+from unpackers.majiro_unpacker import MajiroArcUnpacker
 from core.rpa_reader import RpaReader, RpaEntry
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     'GodotPckUnpacker',
     'GaxUnpacker',
     'SevenZipUnpacker',
+    'MajiroArcUnpacker',
     'RpaReader',
     'RpaEntry',
     'sanitize_filename',

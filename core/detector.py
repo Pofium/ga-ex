@@ -21,6 +21,7 @@ class GameFormat(Enum):
     GODOT_PCK = "godot_pck"  # Godot Engine .pck
     CATSYSTEM2_GAX = "catsystem2_gax"  # CatSystem2 .gax (戯画)
     GENERIC_7ZIP = "generic_7zip"  # 7-Zip fallback
+    MAJIRO_ARC = "majiro_arc"  # Majiro Arc V3 .arc (японские VN)
     MIXED = "mixed"  # одновременно несколько движков
 
 
@@ -57,6 +58,7 @@ class FormatDetector:
     PAK_MAGIC = b'PAK\x00'
     GDPC_MAGIC = b'GDPC'
     GAX_MAGIC = b'\x00\x00\x00\x01'
+    MAJIRO_ARC_MAGIC = b'MajiroArcV3.000\x00'
     RENPY_EXECUTABLES = {'renpy', 'renpy.exe', 'renpy32.exe', 'renpy64.exe'}
     MAX_HEADER_CHECK = 1024
 
@@ -95,6 +97,12 @@ class FormatDetector:
         # Telltale TTarch
         if ext == '.ttarch' and header.startswith(self.TTARCH_MAGIC):
             return GameFormat.TELLTALE_TTARCH
+
+        # Majiro Arc V3 (.arc файлы японских VN)
+        if ext == '.arc' and header.startswith(self.MAJIRO_ARC_MAGIC[:8]):
+            # Проверяем полную магию (16 байт)
+            if len(header) >= 16 and header[:16] == self.MAJIRO_ARC_MAGIC:
+                return GameFormat.MAJIRO_ARC
 
         # Unreal PAK
         if ext == '.pak' and header.startswith(self.PAK_MAGIC):

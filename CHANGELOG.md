@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.12.3 (2026-07-02) — Majiro Arc, Telltale, Wolf, Godot PCK
+
+### Added
+- **Majiro Arc V3 (.arc)** — полная поддержка (Shift-JIS имена, 12-байтные записи)
+  - Протестировано на *Please Bang My Wife* (data1.arc, scenario.arc, arc*.arc)
+  - 360 записей в data1.arc: `.rc8`, `.rct`, медиа-файлы
+- **Telltale (.ttarch)** — полная поддержка (T3GZ magic, zlib сжатие)
+  - Парсинг object table с детекцией сжатых/несжатых объектов
+  - Автоопределение формата по magic bytes (PNG, JPEG, DDS, WAV, OGG)
+- **Wolf RPG Editor (.wolf)** — открытие как ZIP + raw WOLF формат
+  - Wolf RPG Editor 1.x: ZIP-архив (иногда зашифрован паролем)
+  - Wolf RPG Editor 2.x: сырой WOLF binary (детект, TBD)
+- **Godot Engine (.pck)** — полная поддержка v0-v2
+  - Формат: GDPC magic, uint32/uint64 offsets, MD5 проверка
+  - Поддержка embedded PCK в EXE (поиск magic с конца)
+  - AES encrypted files (flags=1) — сохраняются с расширением .enc
+  - v1: 32-битные оффсеты; v2: 64-битные оффсеты + MD5
+
+### Changed
+- [ui/main_window.py](file:///c:/Projects/rpa-ex/ui/main_window.py):
+  - Добавлен `MajiroArcUnpacker` в импорты
+  - `.arc` добавлен в file dialog filters
+  - `.arc` добавлен в авто-детект форматов
+- [core/detector.py](file:///c:/Projects/rpa-ex/core/detector.py):
+  - `MAJIRO_ARC_MAGIC` в константах
+  - Детект Majiro Arc по `MajiroArcV3.000\0` магии
+- [core/extractor.py](file:///c:/Projects/rpa-ex/core/extractor.py):
+  - `MajiroArcUnpacker` в экспортах
+- [README.md](file:///c:/Projects/rpa-ex/README.md):
+  - Telltale: `🔍 Детект` → `✅ Полная (T3GZ, zlib)`
+  - Wolf RPG: `🔍 Детект` → `✅ ZIP; WOLF raw (частично)`
+  - Majiro Arc: `✅ Полная (v3, Shift-JIS)` (новый)
+  - Godot PCK: `🔍 Детект` → `✅ Полная (v0-v2, embedded EXE*)`
+
+### Fixed
+- [tests/test_new_formats.py](file:///c:/Projects/rpa-ex/tests/test_new_formats.py):
+  - Telltale тест: старая магия `TTarch` → правильная магия `T3GZ`
+  - Telltale тест: невалидный тест заменён на `test_telltale_unpack_real_header`
+
+### Stats
+- 132/132 тестов проходят
+
 ## v0.12.2 (2026-06-22) — Fix Qt6WebEngineCore decompression + .pak support
 
 ### Fixed

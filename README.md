@@ -19,10 +19,11 @@
 | **RPG Maker XP/VX/VX Ace** | `.rgssad`, `.rgss2a`, `.rgss3a` | ✅ Полная |
 | **RPG Maker MV/MZ** | `.rpgmvp`, `.rpgmvo`, `.rpgmvm`, `.png_`, `.ogg_`, `.m4a_` | ✅ Полная (с ключом) |
 | **CatSystem2** | `.gax`, `.pck` | ⚠️ Частично (см. ниже) |
-| **Telltale** | `.ttarch` | 🔍 Детект |
-| **Wolf RPG Editor** | `.wolf` | 🔍 Детект |
+| **Telltale** | `.ttarch` | ✅ Полная (T3GZ, zlib) |
+| **Wolf RPG Editor** | `.wolf` | ✅ ZIP; WOLF raw (частично) |
+| **Majiro Arc** | `.arc` (`MajiroArcV3`) | ✅ Полная (v3, Shift-JIS) |
 | **Unreal Engine** | `.pak` | ✅ Полная (v1-v12, Zlib/Gzip/Oodle/LZ4, AES*) |
-| **Godot Engine** | `.pck` | 🔍 Детект |
+| **Godot Engine** | `.pck` | ✅ Полная (v0-v2, embedded EXE*) |
 | **7-Zip fallback** | `.7z`, `.zip`, `.rar`, `.tar`, `.gz`, `.bz2`, `.xz` | ✅ Полная (через 7z CLI) |
 
 ### Особенности
@@ -110,11 +111,12 @@ from games built with various engines, with both GUI and CLI.
 | **KiriKiri** | `.xp3` | ✅ Full |
 | **RPG Maker XP/VX/VX Ace** | `.rgssad`, `.rgss2a`, `.rgss3a` | ✅ Full |
 | **RPG Maker MV/MZ** | `.rpgmvp`, `.rpgmvo`, `.rpgmvm`, `.png_`, `.ogg_`, `.m4a_` | ✅ Full (with key) |
-| **CatSystem2** | `.gax`, `.pck` | ⚠️ Detect + decrypt (with game exe) |
-| **Telltale** | `.ttarch` | 🔍 Detect |
-| **Wolf RPG Editor** | `.wolf` | 🔍 Detect |
-| **Unreal Engine** | `.pak` | 🔍 Detect |
-| **Godot Engine** | `.pck` | 🔍 Detect |
+| **CatSystem2** | `.gax`, `.pck` | ⚠️ Partial (see below) |
+| **Telltale** | `.ttarch` | ✅ Full (T3GZ, zlib) |
+| **Wolf RPG Editor** | `.wolf` | ✅ ZIP; WOLF raw (partial) |
+| **Majiro Arc** | `.arc` (`MajiroArcV3`) | ✅ Full (v3, Shift-JIS) |
+| **Unreal Engine** | `.pak` | ✅ Full (v1-v12, Zlib/Gzip/Oodle/LZ4, AES*) |
+| **Godot Engine** | `.pck` | ✅ Full (v0-v2, embedded EXE*) |
 | **7-Zip fallback** | `.7z`, `.zip`, `.rar`, `.tar`, `.gz`, `.bz2`, `.xz` | ✅ Full (via 7z CLI) |
 
 ### Features

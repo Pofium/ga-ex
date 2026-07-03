@@ -387,19 +387,32 @@ class TestStubs(unittest.TestCase):
     def test_telltale_detect(self):
         path = os.path.join(self.tmpdir, 'g.ttarch')
         with open(path, 'wb') as f:
-            f.write(b'TTarch' + b'\x00' * 50)
+            f.write(b'T3GZ' + b'\x00' * 50)
         u = TelltaleUnpacker()
         self.assertTrue(u.detect(path))
 
-    def test_telltale_unpack_returns_error(self):
+    def test_telltale_unpack_real_header(self):
+        """Распаковка реального T3GZ-заголовка (без данных)."""
+        import struct
         path = os.path.join(self.tmpdir, 'g.ttarch')
+        # Формат: magic(4) ver(4) tbl_offset(4) obj_count(4) flags(4)
+        header = b'T3GZ'
+        header += struct.pack('<I', 1)     # version
+        header += struct.pack('<I', 20)     # table offset (после заголовка)
+        header += struct.pack('<I', 1)      # 1 объект
+        header += struct.pack('<I', 0)      # flags = no compression
+        # Таблица объектов: csize=4, usize=4, f2=0
+        table = struct.pack('<III', 4, 4, 0)
+        # Данные: "test"
+        data_payload = b'test'
         with open(path, 'wb') as f:
-            f.write(b'TTarch' + b'\x00' * 50)
+            f.write(header + table + data_payload)
         out = os.path.join(self.tmpdir, 'out')
         u = TelltaleUnpacker()
-        result = u.unpack(path, UnpackOptions(output_dir=out))
-        self.assertFalse(result.success)
-        self.assertGreater(len(result.errors), 0)
+        opts = UnpackOptions(output_dir=out)
+        r = u.unpack(path, opts)
+        self.assertTrue(r.success)
+        self.assertEqual(len(r.files_extracted), 1)
 
     def test_unreal_pak_detect(self):
         path = os.path.join(self.tmpdir, 'g.pak')

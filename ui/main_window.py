@@ -14,7 +14,7 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon
 from core.extractor import (
     RpaUnpacker, Xp3Unpacker, RpgmUnpacker, TelltaleUnpacker,
     WolfUnpacker, UnrealPakUnpacker, GodotPckUnpacker, GaxUnpacker,
-    SevenZipUnpacker,
+    SevenZipUnpacker, MajiroArcUnpacker,
 )
 from core.base_unpacker import UnpackOptions
 from core.detector import FormatDetector, GameFormat
@@ -123,6 +123,8 @@ class ExtractThread(QThread):
                     unpacker = GodotPckUnpacker()
                 elif fmt == GameFormat.CATSYSTEM2_GAX:
                     unpacker = GaxUnpacker()
+                elif fmt == GameFormat.MAJIRO_ARC:
+                    unpacker = MajiroArcUnpacker()
                 elif fmt == GameFormat.GENERIC_7ZIP:
                     unpacker = SevenZipUnpacker()
                 elif fmt == GameFormat.UNKNOWN and UNITY_AVAILABLE:
@@ -319,7 +321,8 @@ class DropZone(QLabel):
                         or pl.endswith('.ttarch') \
                         or pl.endswith('.pak') \
                         or pl.endswith('.pck') \
-                        or pl.endswith('.gax'):
+                        or pl.endswith('.gax') \
+                        or pl.endswith('.arc'):
                     if p not in self.parent()._rpa_files:
                         self.parent()._rpa_files.append(p)
                         added += 1
@@ -683,7 +686,7 @@ class MainWindow(QWidget):
             start_dir,
             'Archive files (*.rpa *.xp3 *.assets *.bundle *.unity3d *.resource *.resS '
             '*.rgssad *.rgss2a *.rgss3a *.rpgmvp *.rpgmvo *.rpgmvm *.wolf *.ttarch '
-            '*.pak *.pck *.gax);;'
+            '*.pak *.pck *.gax *.arc);;'
             'RenPy archives (*.rpa);;'
             'KiriKiri archives (*.xp3);;'
             'Unity assets (*.assets *.bundle *.unity3d);;'
@@ -694,6 +697,7 @@ class MainWindow(QWidget):
             'Unreal Engine (*.pak);;'
             'Godot Engine (*.pck);;'
             'CatSystem2 (*.gax);;'
+            'Majiro Arc (*.arc);;'
             'All files (*.*)'
         )
         for filepath in filepaths:
