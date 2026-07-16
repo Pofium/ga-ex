@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+import struct
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -40,6 +41,20 @@ class TestFormatDetector(unittest.TestCase):
     def test_detect_unknown_file(self):
         path = self._create_rpa('test.bin', b'\x00\x00\x00\x00')
         self.assertEqual(self.detector.detect_file(path), GameFormat.UNKNOWN)
+
+    def test_unity_old_bundle_not_false_positive_on_mp4(self):
+        path = os.path.join(self.tmpdir, 'video.mp4')
+        mp4_head = struct.pack('>I', 0x1C) + b'ftypisom' + b'\x00' * 64
+        with open(path, 'wb') as f:
+            f.write(mp4_head)
+        self.assertEqual(self.detector.detect_file(path), GameFormat.UNKNOWN)
+
+    def test_unity_old_bundle_requires_unity_marker(self):
+        path = os.path.join(self.tmpdir, 'bundle.unity3d')
+        head = b'\x00\x00\x00\x1c' + b'UnityRaw' + b'\x00' * 64
+        with open(path, 'wb') as f:
+            f.write(head)
+        self.assertEqual(self.detector.detect_file(path), GameFormat.UNITY_ASSET)
 
     def test_detect_nonexistent_file(self):
         self.assertEqual(

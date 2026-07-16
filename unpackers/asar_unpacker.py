@@ -73,6 +73,28 @@ def _iter_entries(node: dict, prefix: str = '') -> Iterable[Tuple[str, dict]]:
 class ElectronAsarUnpacker(BaseUnpacker):
     name = 'electron_asar'
 
+    @staticmethod
+    def _safe_join(entry_path: str, output_dir: str, sanitize: bool) -> str:
+        rel = entry_path.replace('\\', '/').lstrip('/')
+        parts = []
+        for part in rel.split('/'):
+            part = part.strip()
+            if not part or part == '.':
+                continue
+            if part == '..':
+                continue
+            parts.append(part)
+        rel = '/'.join(parts) or '_unnamed'
+
+        if sanitize:
+            rel = '/'.join(sanitize_filename(p) for p in rel.split('/'))
+
+        target = os.path.normpath(os.path.join(output_dir, rel))
+        abs_out = os.path.abspath(output_dir)
+        if not target.startswith(abs_out + os.sep) and target != abs_out:
+            raise PathTraversalError(f'path escapes output_dir: {entry_path}')
+        return target
+
     @classmethod
     def detect(cls, target: str) -> bool:
         if not os.path.isfile(target):
@@ -149,12 +171,15 @@ class ElectronAsarUnpacker(BaseUnpacker):
                             pass
 
                     try:
-                        safe_rel = sanitize_filename(path_in_asar.replace('\\', '/'))
+                        out_path = self._safe_join(
+                            entry_path=path_in_asar,
+                            output_dir=output_dir,
+                            sanitize=options.sanitize_names,
+                        )
                     except PathTraversalError:
                         result.skipped.append({'path': path_in_asar, 'reason': 'unsafe path (path traversal blocked)'})
                         continue
 
-                    out_path = os.path.join(output_dir, safe_rel.replace('/', os.sep))
                     out_dir = os.path.dirname(out_path)
                     if out_dir:
                         os.makedirs(out_dir, exist_ok=True)

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.12.7 (2026-07-03) — Fix false Unity detection on MP4
+
+### Fixed
+- [core/detector.py](file:///c:/Projects/rpa-ex/core/detector.py): старый Unity bundle heuristic больше не срабатывает на MP4/`ftyp` (раньше Electron-папки ошибочно предлагались как Unity).
+- [unpackers/asar_unpacker.py](file:///c:/Projects/rpa-ex/unpackers/asar_unpacker.py): `.asar` распаковка сохраняет подпапки и не “склеивает” пути в один файл.
+
 ## v0.12.6 (2026-07-03) — Electron app.asar
 
 ### Added

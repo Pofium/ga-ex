@@ -133,8 +133,9 @@ class FormatDetector:
             return GameFormat.UNITY_ASSET
 
         # Старый Unity Asset Bundle
-        if len(header) > 4 and header[:4] in (b'\x00\x00\x00\x1c', b'\x00\x00\x00\x0c'):
-            return GameFormat.UNITY_ASSET
+        if len(header) > 16 and header[:4] in (b'\x00\x00\x00\x1c', b'\x00\x00\x00\x0c'):
+            if b'Unity' in header[:128]:
+                return GameFormat.UNITY_ASSET
 
         # Generic 7-Zip fallback (по расширению)
         if ext in ('.7z', '.zip', '.rar', '.tar', '.gz', '.bz2', '.xz',
