@@ -9,7 +9,7 @@
 **GA Extractor** (Game Archive Extractor) — это утилита для распаковки архивов
 ресурсов из игр на различных движках с графическим интерфейсом и CLI.
 
-### Поддерживаемые форматы (v0.12.6)
+### Поддерживаемые форматы (v0.12.8)
 
 | Движок | Расширения | Распаковка |
 |---|---|---|
@@ -25,7 +25,7 @@
 | **Electron** | `resources\app.asar` | ✅ Полная (app.asar) |
 | **Unreal Engine** | `.pak` | ✅ Полная (v1-v12, Zlib/Gzip/Oodle/LZ4, AES*) |
 | **Godot Engine** | `.pck` | ✅ Полная (v0-v2, embedded EXE*) |
-| **7-Zip fallback** | `.7z`, `.zip`, `.rar`, `.tar`, `.gz`, `.bz2`, `.xz` | ✅ Полная (через 7z CLI) |
+| **7-Zip fallback** | `.7z`, `.zip`, `.rar`, `.tar`, `.gz`, `.bz2`, `.xz`, `.exe`* | ✅ Полная (`zipfile`/7z CLI) |
 
 ### Особенности
 
@@ -49,7 +49,7 @@
 1. Скачайте `GAExtractor.exe` из [Releases](https://github.com/Pofium/ga-ex/releases/latest).
 2. Запустите `GAExtractor.exe` — установка не требуется.
 
-> Опционально: для распаковки `.7z`, `.rar`, `.tar.gz` и других архивов установите [7-Zip](https://www.7-zip.org/).
+> Опционально: для распаковки `.7z`, `.rar`, `.tar.gz` и других архивов установите [7-Zip](https://www.7-zip.org/). `zipfile`-совместимые `.exe` поддерживаются и без него.
 
 ### Использование GUI
 
@@ -103,7 +103,7 @@ pyinstaller ga_extractor.spec --clean
 **GA Extractor** (Game Archive Extractor) — utility for unpacking resource archives
 from games built with various engines, with both GUI and CLI.
 
-### Supported formats (v0.12.6)
+### Supported formats (v0.12.8)
 
 | Engine | Extensions | Unpacking |
 |---|---|---|
@@ -119,7 +119,7 @@ from games built with various engines, with both GUI and CLI.
 | **Electron** | `resources\app.asar` | ✅ Full (app.asar) |
 | **Unreal Engine** | `.pak` | ✅ Full (v1-v12, Zlib/Gzip/Oodle/LZ4, AES*) |
 | **Godot Engine** | `.pck` | ✅ Full (v0-v2, embedded EXE*) |
-| **7-Zip fallback** | `.7z`, `.zip`, `.rar`, `.tar`, `.gz`, `.bz2`, `.xz` | ✅ Full (via 7z CLI) |
+| **7-Zip fallback** | `.7z`, `.zip`, `.rar`, `.tar`, `.gz`, `.bz2`, `.xz`, `.exe`* | ✅ Full (`zipfile`/7z CLI) |
 
 ### Features
 
@@ -140,10 +140,10 @@ from games built with various engines, with both GUI and CLI.
 
 ### Installation
 
-1. Download `GAExtractor.exe` from [Releases](https://github.com/Pofium/rpa-ex/releases/tag/v0.12.0).
+1. Download `GAExtractor.exe` from [Releases](https://github.com/Pofium/ga-ex/releases/latest).
 2. Run `GAExtractor.exe` — no installation required.
 
-> Optional: for `.7z`, `.rar`, `.tar.gz` etc. install [7-Zip](https://www.7-zip.org/).
+> Optional: for `.7z`, `.rar`, `.tar.gz` etc. install [7-Zip](https://www.7-zip.org/). `zipfile`-compatible `.exe` files work without it.
 
 ### GUI usage
 
@@ -189,6 +189,8 @@ pyinstaller ga_extractor.spec --clean
 ```
 
 Output: `dist/GAExtractor.exe` (~280 MB, standalone).
+
+\* `.exe` applies to self-extracting ZIP/NW.js-style packages where the executable contains an appended ZIP payload.
 
 ---
 

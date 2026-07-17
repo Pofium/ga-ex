@@ -9,7 +9,7 @@ def main() -> None:
     # GA Extractor — Game Archive Extractor
     QCoreApplication.setOrganizationName('GAExtractor')
     QCoreApplication.setApplicationName('GA Extractor')
-    QCoreApplication.setApplicationVersion('0.12.7')
+    QCoreApplication.setApplicationVersion('0.12.8')
     app.setApplicationDisplayName('GA Extractor — Game Archive Extractor')
 
     window = MainWindow()

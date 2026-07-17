@@ -12,13 +12,14 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from typing import List, Optional, Tuple
 
 from core.base_unpacker import (
     BaseUnpacker, UnpackOptions, UnpackResult, ProgressCallback,
 )
 from unpackers.rpa_unpacker import (
-    enable_long_path_support, sanitize_filename, PathTraversalError,
+    enable_long_path_support, sanitize_filename, PathTraversalError, to_extended_path,
 )
 
 
@@ -63,14 +64,44 @@ class SevenZipUnpacker(BaseUnpacker):
         if not os.path.isfile(target):
             return False
         ext = os.path.splitext(target)[1].lower()
-        return ext in SEVENZIP_EXTENSIONS
+        if ext in SEVENZIP_EXTENSIONS:
+            return True
+        if ext == '.exe':
+            try:
+                return zipfile.is_zipfile(target)
+            except (OSError, PermissionError):
+                return False
+        return False
 
     def analyze(self, target: str) -> dict:
         return {
             'type': '7zip_fallback',
             'detected': self.detect(target),
             '7z_available': self._find_7z() is not None,
+            'zipfile_compatible': zipfile.is_zipfile(target) if os.path.isfile(target) else False,
         }
+
+    @staticmethod
+    def _safe_join(entry_path: str, output_dir: str, sanitize: bool) -> str:
+        rel = entry_path.replace('\\', '/').lstrip('/')
+        parts = []
+        for part in rel.split('/'):
+            part = part.strip()
+            if not part or part == '.':
+                continue
+            if part == '..':
+                continue
+            parts.append(part)
+        rel = '/'.join(parts) or '_unnamed'
+
+        if sanitize:
+            rel = '/'.join(sanitize_filename(p) for p in rel.split('/'))
+
+        target = os.path.normpath(os.path.join(output_dir, rel))
+        abs_out = os.path.abspath(output_dir)
+        if not target.startswith(abs_out + os.sep) and target != abs_out:
+            raise PathTraversalError(f'path escapes output_dir: {entry_path}')
+        return target
 
     def unpack(
         self,
@@ -79,6 +110,45 @@ class SevenZipUnpacker(BaseUnpacker):
         progress_callback: Optional[ProgressCallback] = None,
     ) -> UnpackResult:
         result = UnpackResult(success=False, output_dir=options.output_dir)
+        if not os.path.isfile(target):
+            result.errors.append(f'Not found: {target}')
+            return result
+
+        output_dir = os.path.abspath(options.output_dir)
+        os.makedirs(output_dir, exist_ok=True)
+
+        if zipfile.is_zipfile(target):
+            try:
+                with zipfile.ZipFile(target) as zf:
+                    infos = zf.infolist()
+                    for info in infos:
+                        if info.is_dir():
+                            continue
+                        try:
+                            safe_path = self._safe_join(
+                                entry_path=info.filename,
+                                output_dir=output_dir,
+                                sanitize=options.sanitize_names,
+                            )
+                        except PathTraversalError:
+                            result.skipped.append({'path': info.filename, 'reason': 'unsafe path (path traversal blocked)'})
+                            continue
+
+                        parent = os.path.dirname(safe_path)
+                        if parent:
+                            os.makedirs(parent, exist_ok=True)
+
+                        with zf.open(info, 'r') as src, open(to_extended_path(safe_path), 'wb') as dst:
+                            shutil.copyfileobj(src, dst)
+
+                        rel = os.path.relpath(safe_path, output_dir).replace('\\', '/')
+                        result.files_extracted.append(rel)
+                result.success = True
+                return result
+            except (OSError, zipfile.BadZipFile, RuntimeError) as e:
+                result.errors.append(f'zipfile: {e}')
+                return result
+
         sevenz = self._find_7z()
         if not sevenz:
             result.errors.append(
@@ -86,12 +156,6 @@ class SevenZipUnpacker(BaseUnpacker):
                 'и добавьте в PATH.'
             )
             return result
-        if not os.path.isfile(target):
-            result.errors.append(f'Not found: {target}')
-            return result
-
-        output_dir = os.path.abspath(options.output_dir)
-        os.makedirs(output_dir, exist_ok=True)
 
         try:
             # 7z x <archive> -o<output_dir> -y

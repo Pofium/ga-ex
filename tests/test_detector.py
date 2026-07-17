@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 import struct
+import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -55,6 +56,29 @@ class TestFormatDetector(unittest.TestCase):
         with open(path, 'wb') as f:
             f.write(head)
         self.assertEqual(self.detector.detect_file(path), GameFormat.UNITY_ASSET)
+
+    def test_detect_sfx_exe_as_generic_archive(self):
+        payload_zip = os.path.join(self.tmpdir, 'payload.zip')
+        with zipfile.ZipFile(payload_zip, 'w') as zf:
+            zf.writestr('data/test.txt', 'hello')
+        path = os.path.join(self.tmpdir, 'game.exe')
+        with open(path, 'wb') as out, open(payload_zip, 'rb') as src:
+            out.write(b'MZ' + b'\x00' * 128)
+            out.write(src.read())
+        self.assertEqual(self.detector.detect_file(path), GameFormat.GENERIC_7ZIP)
+
+    def test_detect_folder_with_sfx_exe(self):
+        payload_zip = os.path.join(self.tmpdir, 'payload2.zip')
+        with zipfile.ZipFile(payload_zip, 'w') as zf:
+            zf.writestr('data/test.txt', 'hello')
+        path = os.path.join(self.tmpdir, 'game2.exe')
+        with open(path, 'wb') as out, open(payload_zip, 'rb') as src:
+            out.write(b'MZ' + b'\x00' * 128)
+            out.write(src.read())
+        info = self.detector.detect_folder(self.tmpdir)
+        self.assertEqual(info.format, GameFormat.GENERIC_7ZIP)
+        self.assertEqual(len(info.assets), 1)
+        self.assertEqual(info.assets[0].path, path)
 
     def test_detect_nonexistent_file(self):
         self.assertEqual(

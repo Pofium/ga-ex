@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import zlib
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -624,6 +625,34 @@ class TestSevenZipUnpacker(unittest.TestCase):
             with open(path, 'wb') as f:
                 f.write(b'placeholder')
             self.assertTrue(SevenZipUnpacker().detect(path), ext)
+
+    def test_detect_sfx_exe(self):
+        zip_path = os.path.join(self.tmpdir, 'payload.zip')
+        with zipfile.ZipFile(zip_path, 'w') as zf:
+            zf.writestr('data/test.txt', 'hello')
+        exe_path = os.path.join(self.tmpdir, 'game.exe')
+        with open(exe_path, 'wb') as out, open(zip_path, 'rb') as src:
+            out.write(b'MZ' + b'\x00' * 128)
+            out.write(src.read())
+        self.assertTrue(SevenZipUnpacker().detect(exe_path))
+
+    def test_unpack_sfx_exe_via_zipfile(self):
+        zip_path = os.path.join(self.tmpdir, 'payload2.zip')
+        with zipfile.ZipFile(zip_path, 'w') as zf:
+            zf.writestr('data/test.txt', 'hello')
+        exe_path = os.path.join(self.tmpdir, 'game2.exe')
+        with open(exe_path, 'wb') as out, open(zip_path, 'rb') as src:
+            out.write(b'MZ' + b'\x00' * 128)
+            out.write(src.read())
+
+        out_dir = os.path.join(self.tmpdir, 'out')
+        u = SevenZipUnpacker()
+        result = u.unpack(exe_path, UnpackOptions(output_dir=out_dir))
+        self.assertTrue(result.success, msg=f'errors={result.errors}')
+        extracted = os.path.join(out_dir, 'data', 'test.txt')
+        self.assertTrue(os.path.exists(extracted))
+        with open(extracted, 'rb') as f:
+            self.assertEqual(f.read(), b'hello')
 
     def test_no_7z_returns_error(self):
         path = os.path.join(self.tmpdir, 'f.zip')

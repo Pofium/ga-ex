@@ -1,5 +1,6 @@
 """Автоопределение формата игровых ассетов."""
 import os
+import zipfile
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -142,6 +143,14 @@ class FormatDetector:
                    '.lzma', '.cab', '.iso', '.msi'):
             return GameFormat.GENERIC_7ZIP
 
+        # Self-extracting ZIP / NW.js executable with appended ZIP payload
+        if ext == '.exe':
+            try:
+                if zipfile.is_zipfile(filepath):
+                    return GameFormat.GENERIC_7ZIP
+            except (OSError, PermissionError):
+                return GameFormat.UNKNOWN
+
         # Electron app.asar
         if ext == '.asar':
             try:
@@ -251,6 +260,16 @@ class FormatDetector:
                         ))
                         total_size += size
                     continue
+
+                # Self-extracting ZIP / NW.js package embedded into EXE
+                if fl.endswith('.exe'):
+                    fmt = self.detect_file(full_path)
+                    if fmt == GameFormat.GENERIC_7ZIP:
+                        assets.append(AssetInfo(
+                            path=full_path, size=size, format=GameFormat.GENERIC_7ZIP,
+                        ))
+                        total_size += size
+                    continue
                 
                 # Majiro Arc V3
                 if fl.endswith('.arc'):
@@ -334,10 +353,11 @@ class FormatDetector:
         has_wolf = any(a.format == GameFormat.WOLF_RPG for a in assets)
         has_majiro = any(a.format == GameFormat.MAJIRO_ARC for a in assets)
         has_asar = any(a.format == GameFormat.ELECTRON_ASAR for a in assets)
+        has_7z = any(a.format == GameFormat.GENERIC_7ZIP for a in assets)
 
         format_count = sum([
             has_rpa, has_unity, has_xp3, has_rpgm, has_ttarch,
-            has_majiro, has_asar, has_pak, has_pck, has_gax, has_wolf,
+            has_majiro, has_asar, has_7z, has_pak, has_pck, has_gax, has_wolf,
         ])
         is_mixed = format_count > 1
 
@@ -357,6 +377,8 @@ class FormatDetector:
             fmt = GameFormat.MAJIRO_ARC
         elif has_asar and not is_mixed:
             fmt = GameFormat.ELECTRON_ASAR
+        elif has_7z and not is_mixed:
+            fmt = GameFormat.GENERIC_7ZIP
         elif has_pak and not is_mixed:
             fmt = GameFormat.UNREAL_PAK
         elif has_pck and not is_mixed:

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.12.8 (2026-07-18) — NW.js / self-extracting EXE support
+
+### Added
+- [core/detector.py](file:///c:/Projects/rpa-ex/core/detector.py): детект `zipfile`-совместимых `.exe` как `GENERIC_7ZIP` для self-extracting архивов и NW.js-пакетов.
+
+### Fixed
+- [core/detector.py](file:///c:/Projects/rpa-ex/core/detector.py): folder scan теперь корректно возвращает итоговый формат `GENERIC_7ZIP`, если в папке найден только встроенный архив в `.exe`.
+- [unpackers/sevenzip_unpacker.py](file:///c:/Projects/rpa-ex/unpackers/sevenzip_unpacker.py): распаковка `zipfile`-совместимых `.exe` работает напрямую через стандартную библиотеку Python, без внешнего `7z`.
+- [tests/test_detector.py](file:///c:/Projects/rpa-ex/tests/test_detector.py) и [tests/test_new_formats.py](file:///c:/Projects/rpa-ex/tests/test_new_formats.py): добавлены тесты на детект и распаковку self-extracting `.exe`.
+
 ## v0.12.7 (2026-07-03) — Fix false Unity detection on MP4
 
 ### Fixed
