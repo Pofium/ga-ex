@@ -41,6 +41,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'err.disk.space': 'Недостаточно места на диске',
         'err.path.length': 'Путь слишком длинный',
         'err.path.traversal': 'Недопустимый путь в архиве',
+        'err.unreal.aes_required': 'Для этого Unreal .pak требуется AES-ключ',
         'err.cancelled': 'Распаковка отменена',
         'opt.sanitize': 'Заменять недопустимые символы',
         'opt.long_paths': 'Поддержка длинных путей Windows',
@@ -51,6 +52,32 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'exe.tip': 'Путь к exe игры CatSystem2 для автоматического извлечения ключа расшифровки .gax',
         'exe.clear': 'Очистить',
         'exe.filter': 'Executable files (*.exe)',
+        'unreal.aes.label': 'AES (для Unreal .pak):',
+        'unreal.aes.placeholder': 'Опционально: AES-ключ Unreal .pak (hex, 64 символа)',
+        'unreal.aes.tip': 'AES-ключ для зашифрованных Unreal Engine .pak архивов',
+        'unreal.aes.clear': 'Очистить',
+        'unreal.aes.prompt_title': 'Обнаружен зашифрованный Unreal .pak',
+        'unreal.aes.prompt_message': (
+            'Обнаружено {0} зашифрованных Unreal .pak файлов.\n\n'
+            'Вставьте AES-ключ, чтобы распаковать их напрямую.\n\n'
+            'Файлы:\n{1}\n\n'
+            '{2}'
+            'Ожидается hex-ключ длиной 64 символа (32 байта).\n'
+            'Пример: 0xAABBCC...'
+        ),
+        'unreal.aes.guid_hint': 'Encryption GUID: {0}\nЭто не сам AES-ключ, а идентификатор.\n\n',
+        'unreal.aes.invalid_title': 'Неверный AES-ключ Unreal',
+        'unreal.aes.invalid_message': (
+            'Не удалось принять AES-ключ.\n\n{0}\n\n'
+            'Ожидается hex-строка длиной 64 символа (32 байта), '
+            'с префиксом 0x или без него.'
+        ),
+        'unreal.aes.required_title': 'Нужен AES-ключ Unreal',
+        'unreal.aes.required_message': (
+            'Среди выбранных файлов есть зашифрованный Unreal .pak.\n\n'
+            'Без AES-ключа его индекс не читается, поэтому распаковка не начата.\n\n'
+            'Укажите ключ в поле "AES (для Unreal .pak)" или вставьте его в popup.'
+        ),
         'gax.hint_title': 'Файлы .gax обнаружены',
         'gax.hint_message': (
             'Обнаружены файлы .gax (CatSystem2).\n\n'
@@ -126,6 +153,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'err.disk.space': 'Not enough disk space',
         'err.path.length': 'Path too long',
         'err.path.traversal': 'Invalid path in archive',
+        'err.unreal.aes_required': 'This Unreal .pak requires an AES key',
         'err.cancelled': 'Extraction cancelled',
         'opt.sanitize': 'Sanitize invalid characters',
         'opt.long_paths': 'Windows long path support',
@@ -136,6 +164,32 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'exe.tip': 'Path to CatSystem2 game exe for automatic .gax decryption key extraction',
         'exe.clear': 'Clear',
         'exe.filter': 'Executable files (*.exe)',
+        'unreal.aes.label': 'AES (for Unreal .pak):',
+        'unreal.aes.placeholder': 'Optional: Unreal .pak AES key (hex, 64 chars)',
+        'unreal.aes.tip': 'AES key for encrypted Unreal Engine .pak archives',
+        'unreal.aes.clear': 'Clear',
+        'unreal.aes.prompt_title': 'Encrypted Unreal .pak detected',
+        'unreal.aes.prompt_message': (
+            'Detected {0} encrypted Unreal .pak files.\n\n'
+            'Paste the AES key to extract them directly.\n\n'
+            'Files:\n{1}\n\n'
+            '{2}'
+            'Expected value: 64 hex characters (32 bytes).\n'
+            'Example: 0xAABBCC...'
+        ),
+        'unreal.aes.guid_hint': 'Encryption GUID: {0}\nThis is not the AES key itself.\n\n',
+        'unreal.aes.invalid_title': 'Invalid Unreal AES key',
+        'unreal.aes.invalid_message': (
+            'Could not accept the AES key.\n\n{0}\n\n'
+            'Expected a 64-character hex string (32 bytes), '
+            'with or without the 0x prefix.'
+        ),
+        'unreal.aes.required_title': 'Unreal AES key required',
+        'unreal.aes.required_message': (
+            'The selected files include an encrypted Unreal .pak.\n\n'
+            'Without the AES key its index cannot be read, so extraction was not started.\n\n'
+            'Enter the key in the "AES (for Unreal .pak)" field or paste it in the popup.'
+        ),
         'gax.hint_title': '.gax files detected',
         'gax.hint_message': (
             '.gax files (CatSystem2) detected.\n\n'

@@ -9,6 +9,7 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.detector import FormatDetector, GameFormat
+from unpackers.pak_unpacker import UNREAL_PAK_FOOTER_MAGIC
 
 
 class TestFormatDetector(unittest.TestCase):
@@ -25,6 +26,17 @@ class TestFormatDetector(unittest.TestCase):
         with open(path, 'wb') as f:
             f.write(header)
             f.write(b'\x00' * 100)
+        return path
+
+    def _create_footer_pak(self, name: str, size: int = 256, footer_size: int = 44) -> str:
+        path = os.path.join(self.tmpdir, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = bytearray(b'\x00' * size)
+        pos = size - footer_size
+        data[pos:pos + 4] = struct.pack('<I', UNREAL_PAK_FOOTER_MAGIC)
+        data[pos + 4:pos + 8] = struct.pack('<I', 8)
+        with open(path, 'wb') as f:
+            f.write(data)
         return path
 
     def test_detect_rpa_30(self):
@@ -67,6 +79,10 @@ class TestFormatDetector(unittest.TestCase):
             out.write(src.read())
         self.assertEqual(self.detector.detect_file(path), GameFormat.GENERIC_7ZIP)
 
+    def test_detect_unreal_pak_footer_magic(self):
+        path = self._create_footer_pak('game.pak')
+        self.assertEqual(self.detector.detect_file(path), GameFormat.UNREAL_PAK)
+
     def test_detect_folder_with_sfx_exe(self):
         payload_zip = os.path.join(self.tmpdir, 'payload2.zip')
         with zipfile.ZipFile(payload_zip, 'w') as zf:
@@ -79,6 +95,13 @@ class TestFormatDetector(unittest.TestCase):
         self.assertEqual(info.format, GameFormat.GENERIC_7ZIP)
         self.assertEqual(len(info.assets), 1)
         self.assertEqual(info.assets[0].path, path)
+
+    def test_detect_folder_with_unreal_pak_footer_magic(self):
+        pak_path = self._create_footer_pak(os.path.join('game', 'archive.pak'))
+        info = self.detector.detect_folder(os.path.join(self.tmpdir, 'game'))
+        self.assertEqual(info.format, GameFormat.UNREAL_PAK)
+        self.assertEqual(len(info.assets), 1)
+        self.assertEqual(info.assets[0].path, pak_path)
 
     def test_detect_nonexistent_file(self):
         self.assertEqual(

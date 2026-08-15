@@ -1,5 +1,91 @@
 # Changelog
 
+## v0.12.13 (2026-08-04) — Godot 4.x PCK v2/v3 fix
+
+### Fixed
+- [unpackers/godot_pck_unpacker.py](file:///c:/Projects/rpa-ex/unpackers/godot_pck_unpacker.py):
+  полная поддержка формата **PCK v2/v3 (Godot 4.0–4.6+)** — заголовок с
+  `file_base`/`dir_offset` и таблицей файлов **в конце архива**, флаги
+  `PACK_REL_FILEBASE`/`PACK_DIR_ENCRYPTED`/`PACK_FILE_ENCRYPTED`. Раньше
+  понимался только layout Godot 3 (таблица сразу после заголовка), поэтому
+  игры на Godot 4.x (напр. *NTR Gambling*, Godot 4.6.3, pack v3) падали с
+  «не удалось прочитать записи» — в GUI это выглядело как «Архив повреждён».
+  Проверено на реальной игре: 1207 файлов, 0 ошибок.
+- Текстуры Godot 4 `.ctex` (GST2): рядом с `.ctex` теперь сохраняется
+  читаемая копия изображения (`.webp`/`.png`/`.jpg`), извлечённая из контейнера.
+- Пути `res://`, `user://`, `uid://` обрезаются до чистой файловой иерархии.
+
+### Added
+- [tests/test_new_formats.py](file:///c:/Projects/rpa-ex/tests/test_new_formats.py):
+  регрессионные тесты `TestGodotPckV3` — сборка минимального PCK v3
+  (dir_offset в конце), распаковка и `analyze` (версии, file_count).
+
+## v0.12.12 (2026-08-01) — TyranoBuilder asar fix
+
+### Fixed
+- [unpackers/asar_unpacker.py](file:///c:/Projects/rpa-ex/unpackers/asar_unpacker.py):
+  the asar header parser now supports **two header layouts**. Besides the classic
+  asar format (JSON at pickle offset 4), it also handles the TyranoBuilder /
+  some Electron builds where the inner pickle carries a second length field
+  (`[uint32 json_len][uint32 json_len-4][JSON]`, JSON at offset 8). Previously
+  such archives — e.g. *Pervs Hotel* (TyranoScript, ~2847 files) — were detected
+  as `UNKNOWN` and could not be extracted. The parser tries length-bounded JSON
+  decode at offsets 4 and 8 with a `{`-based fallback, and validates the result.
+### Added
+- [tests/test_new_formats.py](file:///c:/Projects/rpa-ex/tests/test_new_formats.py):
+  3 regression tests — detection and full unpack of the TyranoBuilder asar
+  layout (offsets/data verified), plus a standard-asar unpack regression.
+
+## v0.12.11 (2026-07-28) — GS (NW.js) engine support
+
+### Added
+- New engine: **GS on NW.js** (e.g. *House of Maids*). Resources are XOR-encrypted
+  with a fixed 5-byte key `0A 2B 36 6F 0B` derived from the game's
+  `GS.DataPreparer` class. Decrypted output keeps the original directory tree.
+- [core/detector.py](file:///c:/Projects/rpa-ex/core/detector.py): new format
+  `GS_NWJS`, file detection by content (XOR → known media signature) and folder
+  detection by the `GS.DataPreparer`/`needsPreparation` marker in `data/ENGINE.js`
+  plus NW.js runtime files. Plain files (e.g. `icon.png`) never false-positive.
+- [unpackers/gs_nwjs_unpacker.py](file:///c:/Projects/rpa-ex/unpackers/gs_nwjs_unpacker.py):
+  new unpacker — decrypts media (`resources/`) and game scripts (`data/*.json.js`),
+  skips engine binaries and plain `data/lib/*.js`. Supports both a whole game
+  folder and a single encrypted file.
+- [core/extractor.py](file:///c:/Projects/rpa-ex/core/extractor.py),
+  [cli.py](file:///c:/Projects/rpa-ex/cli.py),
+  [ui/main_window.py](file:///c:/Projects/rpa-ex/ui/main_window.py): wired the new
+  unpacker into GUI, CLI and the common pipeline.
+- [tests/test_gs_nwjs.py](file:///c:/Projects/rpa-ex/tests/test_gs_nwjs.py): 15
+  regression tests (detector for PNG/JPG/OGG/WAV/WOFF/WebM, no-false-positives,
+  folder detection, single-file and folder decryption, path-traversal guard).
+- [ga_extractor.spec](file:///c:/Projects/rpa-ex/ga_extractor.spec): added
+  `unpackers.gs_nwjs_unpacker` to PyInstaller hidden imports.
+
+### How it works
+The GS engine wraps NW.js (node-webkit) and encrypts every game resource with a
+repeating-XOR cipher. The key is generated at runtime from the seed
+`Int32Array([42, 11, 23, 88, 133])` via a WASM function, but it is constant for a
+given engine build, so any encrypted media file exposes it through its well-known
+header (PNG → `\x89PNG`, JPEG → `\xFF\xD8\xFF`, etc.). GA Extractor derives the key
+from content, so it needs no per-game configuration.
+
+## v0.12.10 (2026-07-18) — Unreal AES key UX
+
+### Added
+- [ui/main_window.py](file:///c:/Projects/rpa-ex/ui/main_window.py): добавлено постоянное поле `AES (для Unreal .pak)` с сохранением последнего значения, а также popup-запрос ключа только для реально обнаруженных зашифрованных Unreal `.pak`.
+- [cli.py](file:///c:/Projects/rpa-ex/cli.py) and [core/base_unpacker.py](file:///c:/Projects/rpa-ex/core/base_unpacker.py): CLI принимает `--aes-key`, а общий pipeline распаковки теперь пробрасывает Unreal AES-ключ во все нужные места.
+
+### Fixed
+- [unpackers/pak_unpacker.py](file:///c:/Projects/rpa-ex/unpackers/pak_unpacker.py): добавлены нормализация Unreal AES-ключа, чтение encryption-флага из footer и понятная ошибка для зашифрованного индекса без ключа.
+- [ui/i18n.py](file:///c:/Projects/rpa-ex/ui/i18n.py): добавлены локализованные сообщения для AES popup, валидации ключа и предупреждений перед запуском распаковки.
+- [tests/test_pak_unpacker.py](file:///c:/Projects/rpa-ex/tests/test_pak_unpacker.py): добавлены регрессии на encrypted Unreal footer и формат AES-ключа.
+
+## v0.12.9 (2026-07-18) — Unreal PAK footer detection hotfix
+
+### Fixed
+- [core/detector.py](file:///c:/Projects/rpa-ex/core/detector.py): Unreal `.pak` detection now accepts real UE4/UE5 archives whose magic is stored in the footer, so folder scan no longer misses valid `.pak` files.
+- [unpackers/pak_unpacker.py](file:///c:/Projects/rpa-ex/unpackers/pak_unpacker.py): added shared Unreal footer-signature detection and a runtime `pyuepak` Oodle compatibility patch for affected compressed archives.
+- [tests/test_detector.py](file:///c:/Projects/rpa-ex/tests/test_detector.py) and [tests/test_pak_unpacker.py](file:///c:/Projects/rpa-ex/tests/test_pak_unpacker.py): added regression tests for footer-based Unreal `.pak` detection.
+
 ## v0.12.8 (2026-07-18) — NW.js / self-extracting EXE support
 
 ### Added

@@ -18,6 +18,7 @@ from unpackers.gax_unpacker import GaxUnpacker
 from unpackers.sevenzip_unpacker import SevenZipUnpacker
 from unpackers.majiro_unpacker import MajiroArcUnpacker
 from unpackers.asar_unpacker import ElectronAsarUnpacker
+from unpackers.gs_nwjs_unpacker import GsNwjsUnpacker
 from core.rpa_reader import RpaReader, RpaEntry
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     'SevenZipUnpacker',
     'MajiroArcUnpacker',
     'ElectronAsarUnpacker',
+    'GsNwjsUnpacker',
     'RpaReader',
     'RpaEntry',
     'sanitize_filename',

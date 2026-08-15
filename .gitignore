@@ -7,10 +7,16 @@ build/
 dist/
 *.exe
 *.zip
+*.7z
+*.tar
+*.gz
+*.rar
+*.rar
 
 *.bundle
 release-notes.md
 test_output/
+output/
 
 .env
 .venv
@@ -22,8 +28,13 @@ venv.bak/
 
 .idea/
 .vscode/
+.zcode/
 *.swp
 *.swo
+
+*.log
+notify.log
+*.log.*
 
 *.rpa
 movie01.rpa

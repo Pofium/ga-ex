@@ -1,39 +1,32 @@
 """Unpacker для Godot Engine .pck архивов.
 
 Формат (на основе Godot source: core/io/pck_packer.cpp, core/io/file_access_pack.cpp):
-  Header (24 + 16 байт):
+
+  Header (для всех версий):
     Magic "GDPC" (4 байта)
-    Version (uint32 LE): 1 или 2
+    Pack version (uint32 LE): 0/1 (Godot 3.x), 2 (Godot 4.0–4.3), 3 (Godot 4.4+)
     Godot Major (uint32 LE)
     Godot Minor (uint32 LE)
-    Godot Patch/Revision (uint32 LE)
-    Reserved 0x10 (4 байта) — v2: 0, v0/1: может быть флагом
-    File base offset (uint32 LE)  — v2: 0, v1: 0, v0: 0x70+ (старый формат)
-    Reserved 0x08 (4 байта)
-    Reserved 0x0C (4 байта)
-    Reserved 0x00 (4 байта, 16 total: 0x10 0x08 0x0C 0x00 = {16,8,12,0})
+    Godot Patch (uint32 LE)
+    --- v2/v3 (Godot 4): ---
+    Pack flags (uint32):   bit0=PACK_DIR_ENCRYPTED, bit1=PACK_REL_FILEBASE
+    File base offset (uint64): база для offset-ов файлов (обычно = конец заголовка)
+    Directory offset (uint64): смещение таблицы файлов (в конце PCK!)
+    --- v0/v1 (Godot 3): ---
+    reserved 16 байт (16×uint32)
+    Таблица файлов идёт СРАЗУ после заголовка.
 
-    После заголовка: 4 или 8 байт нулей (версионно-зависимо).
-    Затем: uint32 — количество файлов.
-    Затем: массив file entries начиная с file_base_offset.
+  Таблица файлов (по смещению dir_offset для v2/v3, или сразу после заголовка для v0/v1):
+    uint32 file_count
+    file_count × entry:
+      uint32 path_len
+      char[path_len] path (UTF-8, без null-terminator)
+      uint64 offset   (относительно file_base; для v0/v1 — относительно начала файла)
+      uint64 size
+      uint8[16] md5 (может быть нулевым)
+      uint32 flags (только v2/v3; bit0=PACK_FILE_ENCRYPTED)
 
-  File Entry (v2):
-    uint32 path_len
-    char[path_len] path (UTF-8, без null-terminator)
-    uint64 offset
-    uint64 size
-    uint8[16] md5 (может быть нулевым)
-    uint32 flags (0=нет шифра, 1=AES-256 зашифрован если PCK зашифрован)
-
-  File Entry (v1):
-    uint32 path_len
-    char[path_len] path
-    uint32 offset
-    uint32 size
-    uint8[16] md5
-
-Зашифрованные файлы (flags=1) не поддерживаются без ключа (как RPG Maker).
-Без ключа файл сохраняется как .bin.
+Зашифрованные файлы (flags & 1) сохраняются как есть (без дешифровки — нет ключа).
 """
 from __future__ import annotations
 
@@ -47,6 +40,12 @@ from core.base_unpacker import (
 )
 
 GODOT_PCK_MAGIC = b'GDPC'
+
+# Pack flags (Godot 4)
+PACK_DIR_ENCRYPTED = 1
+PACK_REL_FILEBASE = 2
+# File flags
+PACK_FILE_ENCRYPTED = 1
 
 
 class GodotPckUnpacker(BaseUnpacker):
@@ -78,6 +77,122 @@ class GodotPckUnpacker(BaseUnpacker):
         except (OSError, PermissionError):
             return False
 
+    @staticmethod
+    def _locate_pck_start(fdata: bytes) -> int:
+        """Возвращает смещение начала PCK (для встроенного в EXE — ищет magic)."""
+        if fdata[:4] == GODOT_PCK_MAGIC:
+            return 0
+        idx = fdata.rfind(GODOT_PCK_MAGIC)
+        return idx if idx >= 0 else -1
+
+    @classmethod
+    def _parse_header(cls, fdata: bytes, base: int) -> Optional[dict]:
+        """Парсит заголовок PCK. Возвращает dict или None при ошибке.
+
+        Для Godot 4 (pack v2/v3) возвращает file_base, dir_offset, flags.
+        Для Godot 3 (pack v0/v1) dir_offset = None (таблица сразу после заголовка).
+        """
+        if base + 20 > len(fdata):
+            return None
+        magic = fdata[base:base + 4]
+        if magic != GODOT_PCK_MAGIC:
+            return None
+        pack_ver = struct.unpack_from('<I', fdata, base + 4)[0]
+        major = struct.unpack_from('<I', fdata, base + 8)[0]
+        minor = struct.unpack_from('<I', fdata, base + 12)[0]
+        patch = struct.unpack_from('<I', fdata, base + 16)[0]
+
+        info = {
+            'pack_ver': pack_ver,
+            'godot_ver': f'{major}.{minor}.{patch}',
+            'flags': 0,
+            'file_base': 0,
+            'dir_offset': None,  # None = таблица сразу после заголовка
+            'header_size': 20,
+        }
+
+        if pack_ver >= 2:
+            # Godot 4: flags(uint32) + file_base(uint64) + dir_offset(uint64)
+            if base + 40 > len(fdata):
+                return None
+            info['flags'] = struct.unpack_from('<I', fdata, base + 20)[0]
+            info['file_base'] = struct.unpack_from('<Q', fdata, base + 24)[0]
+            info['dir_offset'] = struct.unpack_from('<Q', fdata, base + 32)[0]
+            info['header_size'] = 40
+            # PACK_REL_FILEBASE всегда включён в v3; файлы отсчитываются от file_base
+            if pack_ver >= 3 or (info['flags'] & PACK_REL_FILEBASE):
+                pass  # offset-ы уже относительны file_base
+            else:
+                # v2 без PACK_REL_FILEBASE — offset-ы абсолютные (file_base=0)
+                info['file_base'] = 0
+        else:
+            # Godot 3 (pack v0/v1): 16 reserved байт после версии
+            info['header_size'] = 20 + 16  # 36
+        return info
+
+    @classmethod
+    def _read_file_table(cls, fdata: bytes, header: dict, base: int) -> List[dict]:
+        """Читает таблицу файлов по dir_offset (или после заголовка)."""
+        dir_off = header['dir_offset']
+        if dir_off is None:
+            # Godot 3: таблица сразу после заголовка (относительно base)
+            pos = base + header['header_size']
+        else:
+            # Godot 4: абсолютное смещение директории
+            pos = dir_off
+            # Для встроенного PCK dir_offset абсолютный от начала файла
+
+        if pos + 4 > len(fdata):
+            return []
+        file_count = struct.unpack_from('<I', fdata, pos)[0]
+        pos += 4
+        if file_count > 1000000:  # sanity
+            return []
+
+        entries: List[dict] = []
+        pack_ver = header['pack_ver']
+        for i in range(file_count):
+            if pos + 4 > len(fdata):
+                break
+            name_len = struct.unpack_from('<I', fdata, pos)[0]
+            pos += 4
+            if name_len == 0 or name_len > 65535 or pos + name_len > len(fdata):
+                break
+            raw = fdata[pos:pos + name_len]
+            try:
+                name = raw.decode('utf-8').rstrip('\x00')
+            except UnicodeDecodeError:
+                name = raw.decode('utf-8', errors='replace').rstrip('\x00')
+            pos += name_len
+
+            if pack_ver >= 2:
+                # uint64 offset, uint64 size, md5[16], uint32 flags
+                if pos + 36 > len(fdata):
+                    break
+                offset = struct.unpack_from('<Q', fdata, pos)[0]
+                size = struct.unpack_from('<Q', fdata, pos + 8)[0]
+                md5 = fdata[pos + 16:pos + 32]
+                flags = struct.unpack_from('<I', fdata, pos + 32)[0]
+                pos += 36
+            else:
+                # Godot 3 v0/v1: uint32 offset, uint32 size, md5[16]
+                if pos + 24 > len(fdata):
+                    break
+                offset = struct.unpack_from('<I', fdata, pos)[0]
+                size = struct.unpack_from('<I', fdata, pos + 4)[0]
+                md5 = fdata[pos + 8:pos + 24]
+                flags = 0
+                pos += 24
+
+            entries.append({
+                'name': name,
+                'offset': offset,
+                'size': size,
+                'md5': md5,
+                'flags': flags,
+            })
+        return entries
+
     def analyze(self, target: str) -> dict:
         info = {
             'type': 'godot_pck',
@@ -89,44 +204,22 @@ class GodotPckUnpacker(BaseUnpacker):
             return info
         try:
             with open(target, 'rb') as f:
-                magic = f.read(4)
-                if magic != GODOT_PCK_MAGIC:
-                    # Может быть EXE с embedded PCK в конце
-                    fz = os.path.getsize(target)
-                    f.seek(-4, 2)
-                    tail = f.read(4)
-                    if tail == GODOT_PCK_MAGIC:
-                        info['embedded'] = True
-                        # Ищем начало PCK — magic "GDPC" перед tail
-                        # Поиск back-to-front
-                        f.seek(0)
-                        fdata = f.read()
-                        pck_start = fdata.rfind(GODOT_PCK_MAGIC, 0, fz - 4)
-                        if pck_start >= 0:
-                            f_data = fdata[pck_start:]
-                        else:
-                            info['error'] = 'embedded PCK not found'
-                            return info
-                    else:
-                        info['error'] = 'not a Godot PCK'
-                        return info
-                else:
-                    f.seek(0)
-                    f_data = f.read()
-
-            # Читаем заголовок
-            if len(f_data) < 24:
-                info['error'] = 'header too short'
+                fdata = f.read()
+            base = self._locate_pck_start(fdata)
+            if base < 0:
+                info['error'] = 'GDPC magic not found'
                 return info
-            version = struct.unpack_from('<I', f_data, 4)[0]
-            major = struct.unpack_from('<I', f_data, 8)[0]
-            minor = struct.unpack_from('<I', f_data, 12)[0]
-            patch = struct.unpack_from('<I', f_data, 16)[0]
-            info['version'] = version
-            info['godot_ver'] = f'{major}.{minor}.{patch}'
-
-            # Считаем файлы после reserved
-            info['file_count'] = self._find_file_count(f_data, version)
+            if base > 0:
+                info['embedded'] = True
+            header = self._parse_header(fdata, base)
+            if header is None:
+                info['error'] = 'header too short / invalid'
+                return info
+            info['version'] = header['pack_ver']
+            info['godot_ver'] = header['godot_ver']
+            info['flags'] = header['flags']
+            entries = self._read_file_table(fdata, header, base)
+            info['file_count'] = len(entries)
         except Exception as e:
             info['error'] = f'{type(e).__name__}: {e}'
         return info
@@ -148,26 +241,10 @@ class GodotPckUnpacker(BaseUnpacker):
         output_dir = options.output_dir
         os.makedirs(output_dir, exist_ok=True)
 
-        # Читаем весь файл
+        # Читаем весь файл (PCK или EXE со встроенным PCK)
         try:
             with open(target, 'rb') as f:
-                fz = os.path.getsize(target)
-                magic = f.read(4)
-                if magic != GODOT_PCK_MAGIC:
-                    # Может быть EXE с embedded PCK
-                    f.seek(0)
-                    fdata = f.read()
-                    pck_start = fdata.rfind(GODOT_PCK_MAGIC, 0, fz - 4)
-                    if pck_start >= 0:
-                        fdata = fdata[pck_start:]
-                    else:
-                        result.errors.append(
-                            f'{os.path.basename(target)}: GDPC magic не найден'
-                        )
-                        return result
-                else:
-                    f.seek(0)
-                    fdata = f.read()
+                fdata = f.read()
         except (OSError, PermissionError) as e:
             result.errors.append(f'{os.path.basename(target)}: {e}')
             return result
@@ -178,103 +255,51 @@ class GodotPckUnpacker(BaseUnpacker):
             )
             return result
 
-        # Парсим заголовок
-        version = struct.unpack_from('<I', fdata, 4)[0]
-        if version not in (0, 1, 2):
-            result.warnings.append(
-                f'Неизвестная версия PCK {version} — обработка как v2'
-            )
-
-        # Ищем количество файлов
-        magic = fdata[:4]
-        pos = 20 if version == 1 else 24
-        # Пропускаем reserved bytes
-        if version >= 2:
-            reserved = 16
-        elif version == 1:
-            reserved = 8
-        else:
-            reserved = 4
-
-        # Читаем все поля reserved чтобы найти file_count
-        # Формат: [magic 4] [version 4] [major 4] [minor 4] [patch 4]
-        #         [reserved...] [file_count 4]
-        # Reserved bytes (version >= 2): {0x10, 0x08, 0x0C, 0x00} × 4 байта каждый
-
-        # Ищем file_count эвристически: после reserved ищем uint32 с разумным значением
-        header_end = 24 + reserved
-        file_count = 0
-        count_offset = 0
-        for off in range(header_end - 4, min(header_end + 8, len(fdata) - 8), 4):
-            candidate = struct.unpack_from('<I', fdata, off)[0]
-            if 1 <= candidate <= 100000:
-                # Проверяем что следом идёт длина имени
-                if off + 8 <= len(fdata):
-                    name_len = struct.unpack_from('<I', fdata, off + 4)[0]
-                    if 2 <= name_len <= 500:
-                        file_count = candidate
-                        count_offset = off + 4
-                        break
-
-        if file_count == 0:
+        # Локализуем начало PCK (для встроенного в EXE)
+        base = self._locate_pck_start(fdata)
+        if base < 0:
             result.errors.append(
-                f'{os.path.basename(target)}: не удалось найти список файлов '
-                f'(версия PCK={version})'
+                f'{os.path.basename(target)}: GDPC magic не найден'
             )
             return result
 
-        # Читаем file entries
-        entries = []
-        pos = count_offset
-        for i in range(file_count):
-            if pos + 4 > len(fdata):
-                break
-            name_len = struct.unpack_from('<I', fdata, pos)[0]
-            pos += 4
-            if name_len == 0 or pos + name_len > len(fdata):
-                result.warnings.append(
-                    f'entry {i}: некорректная длина имени ({name_len})'
-                )
-                break
-            name = fdata[pos:pos + name_len]
-            try:
-                name_str = name.decode('utf-8').rstrip('\x00')
-            except UnicodeDecodeError:
-                name_str = name.decode('utf-8', errors='replace').rstrip('\x00')
-            pos += name_len
+        header = self._parse_header(fdata, base)
+        if header is None:
+            result.errors.append(
+                f'{os.path.basename(target)}: некорректный заголовок PCK'
+            )
+            return result
 
-            if version >= 2 and pos + 16 > len(fdata):
-                break
-            if version < 2 and pos + 8 > len(fdata):
-                break
+        pack_ver = header['pack_ver']
+        if pack_ver not in (0, 1, 2, 3):
+            result.warnings.append(
+                f'Неизвестная версия PCK {pack_ver} — попытка обработки как v2'
+            )
 
-            if version >= 2:
-                offset = struct.unpack_from('<Q', fdata, pos)[0]
-                size = struct.unpack_from('<Q', fdata, pos + 8)[0]
-                md5 = fdata[pos + 16:pos + 32] if pos + 32 <= len(fdata) else b'\x00' * 16
-                flags = struct.unpack_from('<I', fdata, pos + 32)[0] if pos + 36 <= len(fdata) else 0
-                entry_size = 36  # 4 + path_len + 8 + 8 + 16 + 4
-            else:
-                offset = struct.unpack_from('<I', fdata, pos)[0]
-                size = struct.unpack_from('<I', fdata, pos + 4)[0]
-                md5 = fdata[pos + 8:pos + 24] if pos + 24 <= len(fdata) else b'\x00' * 16
-                flags = 0
-                entry_size = 24  # 4 + path_len + 4 + 4 + 16
+        # Зашифрованная директория (PACK_DIR_ENCRYPTED) — не читается без ключа
+        if header['flags'] & PACK_DIR_ENCRYPTED:
+            result.errors.append(
+                f'{os.path.basename(target)}: таблица файлов зашифрована '
+                f'(PACK_DIR_ENCRYPTED) — требуется ключ шифрования PCK'
+            )
+            return result
 
-            entries.append({
-                'name': name_str,
-                'offset': offset,
-                'size': size,
-                'md5': md5,
-                'flags': flags,
-            })
-            pos += (entry_size - 4)  # path_len уже учтён, поэтому вычитаем 4
-
+        entries = self._read_file_table(fdata, header, base)
         if not entries:
             result.errors.append(
-                f'{os.path.basename(target)}: не удалось прочитать записи о файлах'
+                f'{os.path.basename(target)}: не удалось прочитать записи о файлах '
+                f'(версия PCK={pack_ver})'
             )
             return result
+
+        # База для offset-ов: для Godot 4 — file_base (абсолютный от начала файла,
+        # даже если PCK встроен в EXE и base>0 — Godot пишет абсолютные смещения).
+        # Для Godot 3 offset-ы уже абсолютные от начала PCK.
+        file_base = header['file_base'] if pack_ver >= 2 else 0
+        # Для встроенного PCK нужно скорректировать на base только в случае Godot 3,
+        # где offset-ы относительны начала PCK (а не файла).
+        if pack_ver < 2 and base > 0:
+            file_base = base
 
         # Извлекаем файлы
         for idx, entry in enumerate(entries, 1):
@@ -288,18 +313,19 @@ class GodotPckUnpacker(BaseUnpacker):
                 result.warnings.append(f'{name}: пустой файл (size=0)')
                 continue
 
-            # Зашифрованные файлы (flags=1)
-            if flags & 1:
+            # Зашифрованные файлы (flags & PACK_FILE_ENCRYPTED) сохраняем как есть.
+            if flags & PACK_FILE_ENCRYPTED:
                 result.warnings.append(
                     f'{name}: зашифрован (flags={flags}) — сохраняем как .enc'
                 )
                 # Читаем как есть
-                if offset + size > len(fdata):
+                abs_off = file_base + offset
+                if abs_off + size > len(fdata):
                     result.warnings.append(
                         f'{name}: offset+size за границами PCK'
                     )
                     continue
-                data = fdata[offset:offset + size]
+                data = fdata[abs_off:abs_off + size]
                 safe_name = name.replace('\\', '/').replace('..', '_')
                 out_path = os.path.join(
                     output_dir, f'{safe_name}.enc'
@@ -312,14 +338,15 @@ class GodotPckUnpacker(BaseUnpacker):
                 result.files_extracted.append(out_path)
                 continue
 
-            if offset + size > len(fdata):
+            abs_off = file_base + offset
+            if abs_off + size > len(fdata):
                 result.warnings.append(
                     f'{name}: offset+size за границами PCK '
-                    f'(offset={offset} size={size} pck_len={len(fdata)})'
+                    f'(offset={abs_off} size={size} pck_len={len(fdata)})'
                 )
                 continue
 
-            data = fdata[offset:offset + size]
+            data = fdata[abs_off:abs_off + size]
 
             # Проверяем MD5 если он не нулевой
             if expected_md5 and expected_md5 != b'\x00' * 16:
@@ -329,24 +356,34 @@ class GodotPckUnpacker(BaseUnpacker):
                         f'{name}: MD5 не совпадает (файл может быть повреждён)'
                     )
 
-            # Безопасный путь
+            # Безопасный путь. Godot хранит пути с префиксами res://, user://,
+            # uid:// — обрезаем их, чтобы получить чистую файловую иерархию.
+            clean_name = name.replace('\\', '/')
+            for prefix in ('res://', 'user://', 'uid://', 'res:\\\\'):
+                if clean_name.lower().startswith(prefix):
+                    clean_name = clean_name[len(prefix):]
+                    break
+
             safe_parts = []
-            for part in name.replace('\\', '/').split('/'):
+            for part in clean_name.split('/'):
                 part = part.strip()
                 if not part or part == '.':
                     continue
-                if '..' in part:
+                if part == '..':
                     result.skipped.append({
                         'path': name,
                         'reason': 'path traversal blocked',
                     })
                     continue
+                # Заменяем недопустимые в именах файлов символы (:, *, ?, и т.д.)
+                if options.sanitize_names:
+                    part = self._sanitize_part(part)
                 safe_parts.append(part)
 
             if not safe_parts:
                 safe_parts = [f'unnamed_{idx:04d}']
 
-            out_path = os.path.join(output_dir, '/'.join(safe_parts))
+            out_path = os.path.join(output_dir, *safe_parts)
             out_subdir = os.path.dirname(out_path)
             if out_subdir:
                 os.makedirs(out_subdir, exist_ok=True)
@@ -362,6 +399,14 @@ class GodotPckUnpacker(BaseUnpacker):
 
             result.files_extracted.append(out_path)
 
+            # Godot 4 хранит текстуры в формате .ctex (GST2): внутри лежит
+            # обычное изображение (WebP/PNG/JPEG). Извлекаем его рядом как
+            # удобный читаемый файл.
+            if name.endswith('.ctex'):
+                img_path = self._write_embedded_image(data, out_path)
+                if img_path:
+                    result.files_extracted.append(img_path)
+
             if progress_callback:
                 try:
                     progress_callback(name, idx, len(entries))
@@ -372,20 +417,91 @@ class GodotPckUnpacker(BaseUnpacker):
         return result
 
     @staticmethod
-    def _find_file_count(fdata: bytes, version: int) -> int:
-        """Эвристический поиск количества файлов в PCK заголовке."""
-        # После 24-байтного базового заголовка идёт reserved.
-        reserved = 16 if version >= 2 else (8 if version == 1 else 4)
-        header_end = 24 + reserved
+    def _sanitize_part(part: str) -> str:
+        """Заменяет символы, недопустимые в именах файлов, на '_'."""
+        # Windows недопустимые: < > : " / \ | ? *  и управляющие символы
+        bad = set('<>:"/\\|?*\x00')
+        return ''.join('_' if (c in bad or ord(c) < 32) else c for c in part)
 
-        for off in range(
-            max(header_end - 4, 0),
-            min(header_end + 8, len(fdata) - 8),
-            4,
-        ):
-            candidate = struct.unpack_from('<I', fdata, off)[0]
-            if 1 <= candidate <= 100000:
-                name_len = struct.unpack_from('<I', fdata, off + 4)[0]
-                if 2 <= name_len <= 500:
-                    return candidate
-        return 0
+    @staticmethod
+    def _write_embedded_image(ctex_data: bytes, ctex_path: str) -> Optional[str]:
+        """Извлекает встроенное изображение из .ctex (GST2) и сохраняет рядом.
+
+        Godot 4 StreamTexture2D (.ctex) содержит обычный WebP/PNG/JPEG по
+        фиксированному смещению (обычно 56). Метод ищет известные сигнатуры
+        изображения и сохраняет его как <имя>.<расширение> рядом с .ctex.
+        Возвращает путь к созданному файлу или None.
+        """
+        # Сигнатуры: (needle, offset_adjust, extension)
+        # RIFF....WEBP  — RIFF начинается за 8 байт до 'WEBP'
+        candidates = []
+        idx = ctex_data.find(b'WEBP')
+        if idx >= 0 and idx >= 8 and ctex_data[idx - 8:idx - 4] == b'RIFF':
+            candidates.append((idx - 8, '.webp', b'RIFF'))
+        idx_png = ctex_data.find(b'\x89PNG\r\n\x1a\n')
+        if idx_png >= 0:
+            candidates.append((idx_png, '.png', b'\x89PNG'))
+        idx_jpg = ctex_data.find(b'\xff\xd8\xff')
+        if idx_jpg >= 0:
+            candidates.append((idx_jpg, '.jpg', b'\xff\xd8\xff'))
+
+        if not candidates:
+            return None
+
+        start, ext, sig = candidates[0]
+        # Длина: для RIFF/WebP — из заголовка RIFF; для PNG — до IEND; для JPEG — до конца.
+        payload = b''
+        if ext == '.webp':
+            if start + 8 > len(ctex_data):
+                return None
+            riff_size = struct.unpack_from('<I', ctex_data, start + 4)[0]
+            end = start + 8 + riff_size
+            if end > len(ctex_data):
+                end = len(ctex_data)
+            payload = ctex_data[start:end]
+        elif ext == '.png':
+            iend = ctex_data.find(b'IEND', start)
+            if iend < 0:
+                return None
+            end = iend + 8  # IEND chunk: len(4)+type(4)+crc(4) — type найден, +4(crc)+4
+            end = iend + 4 + 4  # 'IEND' + CRC
+            payload = ctex_data[start:end]
+        else:  # jpg — до конца (JPEG не имеет чёткого маркера длины)
+            end = ctex_data.rfind(b'\xff\xd9')  # EOI marker
+            if end < 0:
+                end = len(ctex_data)
+            else:
+                end += 2
+            payload = ctex_data[start:end]
+
+        if not payload or not payload.startswith(sig):
+            return None
+
+        # Имя: берём basename .ctex без хеш-суффикса, добавляем расширение картинки.
+        base_name = os.path.basename(ctex_path)
+        # .ctex файлы имеют вид "<orig>.png-<hash>.ctex" — обрежем хеш
+        if '-' in base_name and base_name.endswith('.ctex'):
+            stem = base_name[:-len('.ctex')]
+            dash = stem.rfind('-')
+            # Хеш — 32 hex-символа после последнего '-'
+            if dash > 0 and len(stem) - dash - 1 >= 32:
+                stem = stem[:dash]
+            base_name = stem
+        else:
+            base_name = base_name[:-len('.ctex')] if base_name.endswith('.ctex') else base_name
+
+        out_dir = os.path.dirname(ctex_path)
+        out_path = os.path.join(out_dir, base_name + ext)
+        # Если уже есть (имя совпало) — добавляем индекс
+        if os.path.exists(out_path):
+            i = 1
+            while os.path.exists(os.path.join(out_dir, f'{base_name}_{i}{ext}')):
+                i += 1
+            out_path = os.path.join(out_dir, f'{base_name}_{i}{ext}')
+
+        try:
+            with open(out_path, 'wb') as f:
+                f.write(payload)
+        except OSError:
+            return None
+        return out_path

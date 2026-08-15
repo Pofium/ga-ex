@@ -9,7 +9,7 @@
 **GA Extractor** (Game Archive Extractor) — это утилита для распаковки архивов
 ресурсов из игр на различных движках с графическим интерфейсом и CLI.
 
-### Поддерживаемые форматы (v0.12.8)
+### Поддерживаемые форматы (v0.12.13)
 
 | Движок | Расширения | Распаковка |
 |---|---|---|
@@ -23,8 +23,9 @@
 | **Wolf RPG Editor** | `.wolf` | ✅ ZIP; WOLF raw (частично) |
 | **Majiro Arc** | `.arc` (`MajiroArcV3`) | ✅ Полная (v3, Shift-JIS) |
 | **Electron** | `resources\app.asar` | ✅ Полная (app.asar) |
+| **GS (NW.js)** | encrypted `.png/.jpg/.ogg/.wav/.woff/.webm`, `data/*.json.js` | ✅ Полная (XOR) |
 | **Unreal Engine** | `.pak` | ✅ Полная (v1-v12, Zlib/Gzip/Oodle/LZ4, AES*) |
-| **Godot Engine** | `.pck` | ✅ Полная (v0-v2, embedded EXE*) |
+| **Godot Engine** | `.pck` | ✅ Полная (v0-v3, Godot 3.x–4.6, embedded EXE*) |
 | **7-Zip fallback** | `.7z`, `.zip`, `.rar`, `.tar`, `.gz`, `.bz2`, `.xz`, `.exe`* | ✅ Полная (`zipfile`/7z CLI) |
 
 ### Особенности
@@ -36,6 +37,10 @@
   per-game шифрование; для некоторых игр (например, *Kabe no Mukou no Tsuma no Koe 3*)
   смещение ключа в exe захардкожено и не может быть найдено универсально — см. раздел
   «Расшифровка CatSystem2 .gax» ниже.
+- **Поле AES для Unreal `.pak`**: опционально. Для зашифрованных Unreal Engine `.pak`
+  укажите hex-ключ длиной 64 символа (`0x...` или без префикса).
+- **Popup для encrypted Unreal `.pak`**: если среди выбранных файлов найден
+  зашифрованный индекс, GUI предложит вставить AES-ключ до старта распаковки.
 - **GUI и CLI**: используйте GUI для удобства, CLI для автоматизации.
 - **Mass extraction**: распаковка нескольких архивов в один запуск.
 - **Long path support (Windows)**: обход лимита 260 символов через `\\?\` префикс.
@@ -57,8 +62,10 @@
 2. Перетащите архивы (`.rpa`, `.xp3`, `.assets`, `.rgssad`, `.gax`, ...) или папку с игрой
    в окно, либо нажмите «Обзор...» / «Папка».
 3. **Для .gax (CatSystem2)**: укажите путь к exe игры в поле «EXE (для .gax)».
-4. При необходимости измените путь распаковки.
-5. Нажмите «Распаковать».
+4. **Для encrypted Unreal `.pak`**: укажите ключ в поле `AES (для Unreal .pak)` или
+   вставьте его в popup, который появится после детекта зашифрованного индекса.
+5. При необходимости измените путь распаковки.
+6. Нажмите «Распаковать».
 
 ### Использование CLI
 
@@ -67,6 +74,7 @@
 GAExtractor.exe file.rpa -o output_dir
 GAExtractor.exe game.xp3 -o output_dir
 GAExtractor.exe Game.rgss3a -o output_dir
+GAExtractor.exe game.pak -o output_dir --aes-key 0xAABBCC...
 
 # Распаковать все архивы из папки (автодетект)
 GAExtractor.exe C:\Games\MyGame -o C:\Extracted --auto-detect
@@ -103,7 +111,7 @@ pyinstaller ga_extractor.spec --clean
 **GA Extractor** (Game Archive Extractor) — utility for unpacking resource archives
 from games built with various engines, with both GUI and CLI.
 
-### Supported formats (v0.12.8)
+### Supported formats (v0.12.13)
 
 | Engine | Extensions | Unpacking |
 |---|---|---|
@@ -117,8 +125,9 @@ from games built with various engines, with both GUI and CLI.
 | **Wolf RPG Editor** | `.wolf` | ✅ ZIP; WOLF raw (partial) |
 | **Majiro Arc** | `.arc` (`MajiroArcV3`) | ✅ Full (v3, Shift-JIS) |
 | **Electron** | `resources\app.asar` | ✅ Full (app.asar) |
+| **GS (NW.js)** | encrypted `.png/.jpg/.ogg/.wav/.woff/.webm`, `data/*.json.js` | ✅ Full (XOR) |
 | **Unreal Engine** | `.pak` | ✅ Full (v1-v12, Zlib/Gzip/Oodle/LZ4, AES*) |
-| **Godot Engine** | `.pck` | ✅ Full (v0-v2, embedded EXE*) |
+| **Godot Engine** | `.pck` | ✅ Full (v0-v3, Godot 3.x–4.6, embedded EXE*) |
 | **7-Zip fallback** | `.7z`, `.zip`, `.rar`, `.tar`, `.gz`, `.bz2`, `.xz`, `.exe`* | ✅ Full (`zipfile`/7z CLI) |
 
 ### Features
@@ -130,6 +139,10 @@ from games built with various engines, with both GUI and CLI.
   CatSystem2 uses per-game encryption; for some games (e.g. *Kabe no Mukou no
   Tsuma no Koe 3*) the key offset in the exe is hardcoded and cannot be found
   generically — see "CatSystem2 .gax decryption" below for details.
+- **AES field for Unreal `.pak`**: optional. For encrypted Unreal Engine `.pak`
+  archives, provide a 64-character hex key (`0x...` prefix is optional).
+- **Encrypted Unreal popup**: when GUI detects an encrypted Unreal `.pak` index,
+  it prompts for the AES key before extraction starts.
 - **GUI and CLI**: use GUI for convenience, CLI for automation.
 - **Mass extraction**: unpack multiple archives in a single run.
 - **Long path support (Windows)**: bypass 260-char path limit via `\\?\` prefix.
@@ -151,8 +164,10 @@ from games built with various engines, with both GUI and CLI.
 2. Drag archives (`.rpa`, `.xp3`, `.assets`, `.rgssad`, `.gax`, ...) or a game folder
    into the window, or click "Browse..." / "Folder".
 3. **For .gax (CatSystem2)**: specify the path to the game exe in the "EXE (for .gax)" field.
-4. Optionally change the output path.
-5. Click "Extract".
+4. **For encrypted Unreal `.pak`**: enter the key into `AES (for Unreal .pak)` or use
+   the popup shown after encrypted index detection.
+5. Optionally change the output path.
+6. Click "Extract".
 
 ### CLI usage
 
@@ -161,6 +176,7 @@ from games built with various engines, with both GUI and CLI.
 GAExtractor.exe file.rpa -o output_dir
 GAExtractor.exe game.xp3 -o output_dir
 GAExtractor.exe Game.rgss3a -o output_dir
+GAExtractor.exe game.pak -o output_dir --aes-key 0xAABBCC...
 
 # Extract all archives from a folder (auto-detect)
 GAExtractor.exe C:\Games\MyGame -o C:\Extracted --auto-detect

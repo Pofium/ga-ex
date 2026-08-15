@@ -120,6 +120,44 @@ def make_asar(files):
     return header_size_pickle + header_pickle + data_blob
 
 
+def make_asar_tyranobuilder(files):
+    """Asar в формате TyranoBuilder: перед JSON два uint32 (json_len, json_len-4).
+
+    Отличается от классического make_asar() наличием дополнительного поля длины
+    (capacity) — JSON начинается на смещении 8, а не 4.
+    """
+    header = {'files': {}}
+    data_blob = b''
+
+    def add_path(path, meta_root):
+        parts = path.split('/')
+        cur = meta_root
+        for part in parts[:-1]:
+            cur.setdefault(part, {'files': {}})
+            cur = cur[part]['files']
+        cur[parts[-1]] = {'size': len(files[path]), 'offset': str(len(data_blob))}
+
+    for p in sorted(files.keys()):
+        if '\\' in p:
+            raise ValueError('use forward slashes in make_asar_tyranobuilder()')
+        add_path(p, header['files'])
+        data_blob += files[p]
+
+    header_json = json.dumps(header, separators=(',', ':')).encode('utf-8')
+    # Два uint32: длина JSON (с учётом второго поля) и длина JSON.
+    # Реальный формат: [json_len][json_len-4][JSON]. Здесь моделируем именно так.
+    json_len = len(header_json)
+    header_pickle = struct.pack('<II', json_len + 4, json_len) + header_json
+    # Выравнивание до 4 байт
+    if len(header_pickle) % 4 != 0:
+        header_pickle += b'\x00' * (4 - (len(header_pickle) % 4))
+
+    header_size = len(header_pickle)
+    header_size_pickle = struct.pack('<II', 4, header_size)
+
+    return header_size_pickle + header_pickle + data_blob
+
+
 # ============ Tests ============
 
 class TestRpgmDecrypter(unittest.TestCase):
@@ -435,6 +473,53 @@ class TestFormatDetectorExtended(unittest.TestCase):
         self.assertEqual(info.format, GameFormat.ELECTRON_ASAR)
         self.assertEqual(len(info.assets), 1)
 
+    def test_detect_asar_tyranobuilder_format(self):
+        """Asar от TyranoBuilder: двойной uint32 перед JSON (JSON на смещении 8)."""
+        path = os.path.join(self.tmpdir, 'app.asar')
+        with open(path, 'wb') as f:
+            f.write(make_asar_tyranobuilder({'hello.txt': b'hello', 'img.png': b'\x89PNG\r\n\x1a\n'}))
+        self.assertEqual(self.det.detect_file(path), GameFormat.ELECTRON_ASAR)
+        self.assertTrue(ElectronAsarUnpacker.detect(path))
+
+    def test_unpack_asar_tyranobuilder_format(self):
+        """Распаковка asar формата TyranoBuilder: offset-ы и данные корректны."""
+        path = os.path.join(self.tmpdir, 'app.asar')
+        with open(path, 'wb') as f:
+            f.write(make_asar_tyranobuilder({
+                'hello.txt': b'hello',
+                'img.png': b'\x89PNG\r\n\x1a\n',
+                'sub/deep.jpg': bytes([0xff, 0xd8, 0xff, 0xe0]),
+            }))
+        out = os.path.join(self.tmpdir, 'out')
+        result = ElectronAsarUnpacker().unpack(
+            path, UnpackOptions(output_dir=out, continue_on_error=True)
+        )
+        self.assertTrue(result.success, msg=f'errors: {result.errors}')
+        self.assertEqual(len(result.files_extracted), 3)
+        # Проверяем содержимое (offset-ы корректны)
+        with open(os.path.join(out, 'hello.txt'), 'rb') as f:
+            self.assertEqual(f.read(), b'hello')
+        with open(os.path.join(out, 'img.png'), 'rb') as f:
+            self.assertEqual(f.read(), b'\x89PNG\r\n\x1a\n')
+        with open(os.path.join(out, 'sub/deep.jpg'), 'rb') as f:
+            self.assertEqual(f.read(), bytes([0xff, 0xd8, 0xff, 0xe0]))
+
+    def test_unpack_asar_standard_format(self):
+        """Регрессия: классический asar (JSON на смещении 4) тоже распаковывается."""
+        path = os.path.join(self.tmpdir, 'app_std.asar')
+        with open(path, 'wb') as f:
+            f.write(make_asar({'a.txt': b'AAA', 'b/c.png': b'\x89PNG'}))
+        out = os.path.join(self.tmpdir, 'out_std')
+        result = ElectronAsarUnpacker().unpack(
+            path, UnpackOptions(output_dir=out, continue_on_error=True)
+        )
+        self.assertTrue(result.success, msg=f'errors: {result.errors}')
+        self.assertEqual(len(result.files_extracted), 2)
+        with open(os.path.join(out, 'a.txt'), 'rb') as f:
+            self.assertEqual(f.read(), b'AAA')
+        with open(os.path.join(out, 'b/c.png'), 'rb') as f:
+            self.assertEqual(f.read(), b'\x89PNG')
+
 
 class TestStubs(unittest.TestCase):
     """Тесты stub unpacker'ов (Telltale, Wolf, Unreal, Godot, GAX)."""
@@ -503,6 +588,80 @@ class TestStubs(unittest.TestCase):
             f.write(b'\x00' * 200)
         u = WolfUnpacker()
         self.assertTrue(u.detect(path))
+
+
+class TestGodotPckV3(unittest.TestCase):
+    """Регрессия: Godot 4.x PCK v2/v3 — таблица файлов в конце (dir_offset).
+
+    Раньше unpacker понимал только layout Godot 3 (таблица сразу после
+    заголовка) и падал с «не удалось прочитать записи» на играх вроде
+    Godot 4.6 (pack v3) — в GUI это выглядело как «Архив повреждён».
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    @staticmethod
+    def _make_pck_v3(files, pack_ver=3, godot=(4, 6, 3)):
+        """Собирает минимальный PCK Godot 4: header(40) + pad + data + dir."""
+        file_base = 64  # Godot выравнивает базу данных (в реальных pck — 0x70)
+        data = bytearray()
+        entries = bytearray()
+        for name, content in files:
+            nb = name.encode('utf-8')
+            entries += struct.pack('<I', len(nb)) + nb
+            entries += struct.pack('<Q', len(data))       # offset от file_base
+            entries += struct.pack('<Q', len(content))
+            entries += b'\x00' * 16                       # md5 (нулевой)
+            entries += struct.pack('<I', 0)               # flags
+            data += content
+        dir_offset = file_base + len(data)
+
+        header = b'GDPC'
+        header += struct.pack('<I', pack_ver)
+        header += struct.pack('<III', *godot)
+        header += struct.pack('<I', 2)                    # PACK_REL_FILEBASE
+        header += struct.pack('<Q', file_base)
+        header += struct.pack('<Q', dir_offset)
+        assert len(header) == 40
+
+        blob = header + b'\x00' * (file_base - len(header)) + bytes(data)
+        blob += struct.pack('<I', len(files)) + bytes(entries)
+        return blob
+
+    def test_unpack_v3(self):
+        path = os.path.join(self.tmpdir, 'game.pck')
+        with open(path, 'wb') as f:
+            f.write(self._make_pck_v3([
+                ('res://hello.txt', b'godot4'),
+                ('res://sub/dir/data.bin', b'\x01\x02\x03'),
+            ]))
+
+        out = os.path.join(self.tmpdir, 'out')
+        u = GodotPckUnpacker()
+        self.assertTrue(u.detect(path))
+        r = u.unpack(path, UnpackOptions(output_dir=out))
+        self.assertTrue(r.success, msg=f'errors={r.errors}')
+        self.assertEqual(len(r.files_extracted), 2)
+        with open(os.path.join(out, 'hello.txt'), 'rb') as rf:
+            self.assertEqual(rf.read(), b'godot4')
+        with open(os.path.join(out, 'sub', 'dir', 'data.bin'), 'rb') as rf:
+            self.assertEqual(rf.read(), b'\x01\x02\x03')
+
+    def test_analyze_v3(self):
+        path = os.path.join(self.tmpdir, 'game.pck')
+        with open(path, 'wb') as f:
+            f.write(self._make_pck_v3([('res://a.txt', b'a')], godot=(4, 4, 1)))
+        info = GodotPckUnpacker().analyze(path)
+        self.assertTrue(info['detected'])
+        self.assertIsNone(info['error'])
+        self.assertEqual(info['version'], 3)
+        self.assertEqual(info['godot_ver'], '4.4.1')
+        self.assertEqual(info['file_count'], 1)
 
 
 class TestElectronAsarUnpacker(unittest.TestCase):

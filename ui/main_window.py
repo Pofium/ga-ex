@@ -6,7 +6,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QProgressBar, QFileDialog,
-    QMessageBox, QComboBox, QApplication, QCheckBox
+    QMessageBox, QComboBox, QApplication, QCheckBox, QInputDialog
 )
 from PySide6.QtCore import QThread, Signal, QSettings, Qt
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon
@@ -14,12 +14,16 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon
 from core.extractor import (
     RpaUnpacker, Xp3Unpacker, RpgmUnpacker, TelltaleUnpacker,
     WolfUnpacker, UnrealPakUnpacker, GodotPckUnpacker, GaxUnpacker,
-    SevenZipUnpacker, MajiroArcUnpacker, ElectronAsarUnpacker,
+    SevenZipUnpacker, MajiroArcUnpacker, ElectronAsarUnpacker, GsNwjsUnpacker,
 )
 from core.base_unpacker import UnpackOptions
 from core.detector import FormatDetector, GameFormat
 from unpackers.unity_unpacker import UnityUnpacker
 from unpackers import UNITY_AVAILABLE
+from unpackers.pak_unpacker import (
+    get_unreal_pak_encryption_info,
+    normalize_unreal_aes_key,
+)
 from core.errors import RpaError, PathTraversalError, PermissionError
 from ui.i18n import i18n
 
@@ -46,6 +50,7 @@ class ExtractThread(QThread):
         continue_on_error: bool = True,
         use_long_paths: bool = True,
         game_exe_path: Optional[str] = None,
+        unreal_aes_key: Optional[str] = None,
     ):
         super().__init__()
         self.rpa_files = rpa_files
@@ -54,6 +59,7 @@ class ExtractThread(QThread):
         self.continue_on_error = continue_on_error
         self.use_long_paths = use_long_paths
         self.game_exe_path = game_exe_path
+        self.unreal_aes_key = unreal_aes_key
         self._extractor: Optional[RpaUnpacker] = None
         self._has_gax = any(
             f.lower().endswith('.gax') for f in rpa_files
@@ -93,8 +99,14 @@ class ExtractThread(QThread):
                 continue
 
             try:
-                # Автовыбор распаковщика по формату файла
-                fmt = detector.detect_file(rpa_path)
+                # Автовыбор распаковщика по формату. Для папок (напр. GS-NWJS
+                # игра, где весь корень — один ассет) определяем через
+                # detect_folder, т.к. detect_file работает только с файлами.
+                if os.path.isdir(rpa_path):
+                    folder_info = detector.detect_folder(rpa_path)
+                    fmt = folder_info.format
+                else:
+                    fmt = detector.detect_file(rpa_path)
                 is_unity = fmt == GameFormat.UNITY_ASSET
                 is_xp3 = fmt == GameFormat.KIRIKIRI_XP3
                 is_rpgm = fmt in (
@@ -103,9 +115,10 @@ class ExtractThread(QThread):
                 )
                 is_7z = fmt == GameFormat.GENERIC_7ZIP
                 is_asar = fmt == GameFormat.ELECTRON_ASAR
+                is_gs = fmt == GameFormat.GS_NWJS
 
-                # Unity/XP3/RPGM/7z/ASAR — иерархия идёт изнутри архива
-                if is_unity or is_xp3 or is_rpgm or is_7z or is_asar:
+                # Unity/XP3/RPGM/7z/ASAR/GS — иерархия идёт изнутри (папки/архива)
+                if is_unity or is_xp3 or is_rpgm or is_7z or is_asar or is_gs:
                     file_output_dir = self.output_dir
                 if fmt == GameFormat.RENPY_RPA:
                     unpacker = RpaUnpacker()
@@ -128,6 +141,8 @@ class ExtractThread(QThread):
                     unpacker = MajiroArcUnpacker()
                 elif fmt == GameFormat.ELECTRON_ASAR:
                     unpacker = ElectronAsarUnpacker()
+                elif fmt == GameFormat.GS_NWJS:
+                    unpacker = GsNwjsUnpacker()
                 elif fmt == GameFormat.GENERIC_7ZIP:
                     unpacker = SevenZipUnpacker()
                 elif fmt == GameFormat.UNKNOWN and UNITY_AVAILABLE:
@@ -144,6 +159,7 @@ class ExtractThread(QThread):
                     continue_on_error=self.continue_on_error,
                     use_long_paths=self.use_long_paths,
                     game_exe_path=self.game_exe_path,
+                    unreal_aes_key=self.unreal_aes_key,
                 )
                 self._extractor = unpacker
                 result = self._extractor.unpack(
@@ -340,6 +356,8 @@ class DropZone(QLabel):
         has_gax = any(f.lower().endswith('.gax') for f in self.parent()._rpa_files)
         if has_gax and not self.parent()._game_exe_path:
             self.parent()._show_gax_hint()
+        if added > 0:
+            self.parent()._maybe_prompt_unreal_aes_key()
 
 
 class MainWindow(QWidget):
@@ -350,6 +368,7 @@ class MainWindow(QWidget):
         self._extract_thread: Optional[ExtractThread] = None
         self._pending_output_dir = ''
         self._game_exe_path: str = ''
+        self._unreal_aes_key: str = ''
         self._gax_hint_shown = False
         self._setup_ui()
         self._setup_i18n()
@@ -440,6 +459,22 @@ class MainWindow(QWidget):
         exe_layout.addWidget(self._exe_clear_btn)
         main_layout.addLayout(exe_layout)
 
+        # AES-ключ для зашифрованных Unreal .pak — опциональное поле
+        unreal_aes_layout = QHBoxLayout()
+        self._unreal_aes_label = QLabel(i18n.t('unreal.aes.label'))
+        unreal_aes_layout.addWidget(self._unreal_aes_label)
+        self._unreal_aes_edit = QLineEdit()
+        self._unreal_aes_edit.setPlaceholderText(
+            i18n.t('unreal.aes.placeholder')
+        )
+        self._unreal_aes_edit.setToolTip(i18n.t('unreal.aes.tip'))
+        self._unreal_aes_edit.textChanged.connect(self._on_unreal_aes_changed)
+        unreal_aes_layout.addWidget(self._unreal_aes_edit)
+        self._unreal_aes_clear_btn = QPushButton(i18n.t('unreal.aes.clear'))
+        self._unreal_aes_clear_btn.clicked.connect(self._clear_unreal_aes)
+        unreal_aes_layout.addWidget(self._unreal_aes_clear_btn)
+        main_layout.addLayout(unreal_aes_layout)
+
         lang_layout = QHBoxLayout()
         lang_layout.addStretch()
         self._lang_combo = QComboBox()
@@ -503,6 +538,12 @@ class MainWindow(QWidget):
             self._exe_btn.setToolTip(i18n.t('exe.tip'))
             self._exe_clear_btn.setText(i18n.t('exe.clear'))
             self._exe_edit.setPlaceholderText(i18n.t('exe.placeholder'))
+            self._unreal_aes_label.setText(i18n.t('unreal.aes.label'))
+            self._unreal_aes_edit.setPlaceholderText(
+                i18n.t('unreal.aes.placeholder')
+            )
+            self._unreal_aes_edit.setToolTip(i18n.t('unreal.aes.tip'))
+            self._unreal_aes_clear_btn.setText(i18n.t('unreal.aes.clear'))
             self._extract_btn.setText(i18n.t('extract.button'))
             self._cancel_btn.setText(i18n.t('cancel.button'))
             self._open_folder_btn.setText(i18n.t('open.folder'))
@@ -529,6 +570,11 @@ class MainWindow(QWidget):
             self._game_exe_path = last_exe
             self._exe_edit.setText(last_exe)
 
+        last_unreal_aes = settings.value('lastUnrealAesKey', '')
+        if last_unreal_aes:
+            self._unreal_aes_key = str(last_unreal_aes)
+            self._unreal_aes_edit.setText(self._unreal_aes_key)
+
     def set_rpa_file(self, filepath: str) -> None:
         if filepath not in self._rpa_files:
             self._rpa_files.append(filepath)
@@ -541,12 +587,17 @@ class MainWindow(QWidget):
         self._folder_edit.setText(self._output_dir)
         self._extract_btn.setEnabled(len(self._rpa_files) > 0)
         settings.setValue('lastFile', filepath)
+        self._maybe_prompt_unreal_aes_key()
 
     def _on_folder_changed(self, text: str) -> None:
         self._output_dir = text
 
     def _on_exe_changed(self, text: str) -> None:
         self._game_exe_path = text.strip()
+
+    def _on_unreal_aes_changed(self, text: str) -> None:
+        self._unreal_aes_key = text.strip()
+        settings.setValue('lastUnrealAesKey', self._unreal_aes_key)
 
     def _browse_exe(self) -> None:
         """Открывает диалог выбора .exe игры (для расшифровки .gax)."""
@@ -573,6 +624,12 @@ class MainWindow(QWidget):
         self._exe_edit.clear()
         settings.setValue('lastExe', '')
 
+    def _clear_unreal_aes(self) -> None:
+        """Очищает поле AES-ключа Unreal."""
+        self._unreal_aes_key = ''
+        self._unreal_aes_edit.clear()
+        settings.setValue('lastUnrealAesKey', '')
+
     def _show_gax_hint(self) -> None:
         """Показывает подсказку про exe для .gax (один раз за сессию)."""
         if self._gax_hint_shown:
@@ -583,6 +640,129 @@ class MainWindow(QWidget):
             i18n.t('gax.hint_title'),
             i18n.t('gax.hint_message'),
         )
+
+    def _find_encrypted_unreal_paks(self) -> list[dict]:
+        """Возвращает выбранные Unreal `.pak` с зашифрованным индексом."""
+        encrypted = []
+        for path in self._rpa_files:
+            if not path.lower().endswith('.pak'):
+                continue
+            info = get_unreal_pak_encryption_info(path)
+            if info.get('detected') and info.get('is_encrypted_index'):
+                encrypted.append({
+                    'path': path,
+                    'encryption_guid': info.get('encryption_guid', ''),
+                    'version': info.get('version'),
+                })
+        return encrypted
+
+    def _prompt_unreal_aes_key(self, encrypted_paks: list[dict]) -> bool:
+        """Показывает popup ввода AES-ключа для зашифрованных Unreal `.pak`."""
+        if not encrypted_paks:
+            return True
+
+        names = '\n'.join(
+            f'- {os.path.basename(item["path"])}'
+            for item in encrypted_paks[:6]
+        )
+        if len(encrypted_paks) > 6:
+            names += f'\n- ... (+{len(encrypted_paks) - 6} ещё)'
+
+        guid_values = sorted({
+            item['encryption_guid']
+            for item in encrypted_paks
+            if item.get('encryption_guid')
+        })
+        guid_hint = ''
+        if guid_values:
+            guid_hint = i18n.t(
+                'unreal.aes.guid_hint',
+                ', '.join(guid_values[:3]),
+            )
+
+        text, accepted = QInputDialog.getText(
+            self,
+            i18n.t('unreal.aes.prompt_title'),
+            i18n.t(
+                'unreal.aes.prompt_message',
+                len(encrypted_paks),
+                names,
+                guid_hint,
+            ),
+            QLineEdit.Normal,
+            self._unreal_aes_key,
+        )
+        if not accepted:
+            return False
+
+        try:
+            normalized = normalize_unreal_aes_key(text)
+        except ValueError as e:
+            QMessageBox.warning(
+                self,
+                i18n.t('unreal.aes.invalid_title'),
+                i18n.t('unreal.aes.invalid_message', str(e)),
+            )
+            return False
+
+        if not normalized:
+            return False
+
+        self._unreal_aes_key = normalized
+        self._unreal_aes_edit.setText(normalized)
+        settings.setValue('lastUnrealAesKey', normalized)
+        return True
+
+    def _maybe_prompt_unreal_aes_key(self) -> None:
+        """Предлагает ввести AES-ключ, если в списке есть encrypted Unreal `.pak`."""
+        if self._unreal_aes_key:
+            try:
+                normalized = normalize_unreal_aes_key(self._unreal_aes_key)
+            except ValueError:
+                normalized = None
+            if normalized:
+                if normalized != self._unreal_aes_key:
+                    self._unreal_aes_key = normalized
+                    self._unreal_aes_edit.setText(normalized)
+                    settings.setValue('lastUnrealAesKey', normalized)
+                return
+
+        encrypted = self._find_encrypted_unreal_paks()
+        if encrypted:
+            self._prompt_unreal_aes_key(encrypted)
+
+    def _ensure_unreal_aes_key_before_extract(self) -> bool:
+        """Проверяет, нужен ли AES-ключ Unreal перед стартом распаковки."""
+        encrypted = self._find_encrypted_unreal_paks()
+        if not encrypted:
+            return True
+
+        try:
+            normalized = normalize_unreal_aes_key(self._unreal_aes_key)
+        except ValueError as e:
+            QMessageBox.warning(
+                self,
+                i18n.t('unreal.aes.invalid_title'),
+                i18n.t('unreal.aes.invalid_message', str(e)),
+            )
+            return False
+
+        if normalized:
+            if normalized != self._unreal_aes_key:
+                self._unreal_aes_key = normalized
+                self._unreal_aes_edit.setText(normalized)
+            settings.setValue('lastUnrealAesKey', normalized)
+            return True
+
+        if self._prompt_unreal_aes_key(encrypted):
+            return True
+
+        QMessageBox.warning(
+            self,
+            i18n.t('unreal.aes.required_title'),
+            i18n.t('unreal.aes.required_message'),
+        )
+        return False
 
     def _on_file_label_clicked_empty(self) -> None:
         """Клик когда нет выбранных файлов."""
@@ -619,6 +799,7 @@ class MainWindow(QWidget):
             self._update_file_display()
             self._extract_btn.setEnabled(len(self._rpa_files) > 0)
             self._status_label.setText(f'Выбрано: {len(self._rpa_files)} файлов')
+            self._maybe_prompt_unreal_aes_key()
 
     def _on_file_label_clicked(self, _event=None) -> None:
         """Клик на метку 'X files selected' — показывает попап с галочками."""
@@ -664,6 +845,7 @@ class MainWindow(QWidget):
                 self._update_file_display()
                 self._extract_btn.setEnabled(len(self._rpa_files) > 0)
                 self._status_label.setText(f'Выбрано: {len(self._rpa_files)} файлов')
+                self._maybe_prompt_unreal_aes_key()
         except Exception as e:
             QMessageBox.critical(self, 'Error', f'Ошибка:\n{e}')
 
@@ -716,6 +898,8 @@ class MainWindow(QWidget):
                 self._output_dir = os.path.commonpath(self._rpa_files)
             self._folder_edit.setText(self._output_dir)
         self._extract_btn.setEnabled(len(self._rpa_files) > 0)
+        if filepaths:
+            self._maybe_prompt_unreal_aes_key()
 
         # Если добавлены .gax без exe — уведомляем
         has_gax = any(f.lower().endswith('.gax') for f in self._rpa_files)
@@ -919,6 +1103,7 @@ class MainWindow(QWidget):
         self._status_label.setText(
             f'Готово: выбрано {len(selected_assets)} из {len(info.assets)} архивов'
         )
+        self._maybe_prompt_unreal_aes_key()
 
     def _change_lang(self, lang: str) -> None:
         i18n.set_lang(lang.lower())
@@ -927,6 +1112,8 @@ class MainWindow(QWidget):
     def _start_extract(self) -> None:
         if not self._rpa_files or not all(os.path.exists(f) for f in self._rpa_files):
             QMessageBox.warning(self, 'Error', i18n.t('err.invalid.header'))
+            return
+        if not self._ensure_unreal_aes_key_before_extract():
             return
 
         output_dir = self._output_dir
@@ -947,6 +1134,7 @@ class MainWindow(QWidget):
             continue_on_error=self._continue_chk.isChecked(),
             use_long_paths=self._long_paths_chk.isChecked(),
             game_exe_path=self._game_exe_path or None,
+            unreal_aes_key=self._unreal_aes_key or None,
         )
         self._extract_thread.progress.connect(self._on_progress)
         self._extract_thread.file_progress.connect(self._on_file_progress)
@@ -1035,6 +1223,8 @@ class MainWindow(QWidget):
             err_key = 'err.disk.space'
         elif 'path' in message.lower() or 'traversal' in message.lower():
             err_key = 'err.path.traversal'
+        elif 'aes' in message.lower() or 'encryption key' in message.lower():
+            err_key = 'err.unreal.aes_required'
         elif 'header' in message.lower() or 'format' in message.lower():
             err_key = 'err.invalid.header'
 

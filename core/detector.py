@@ -24,6 +24,7 @@ class GameFormat(Enum):
     GENERIC_7ZIP = "generic_7zip"  # 7-Zip fallback
     MAJIRO_ARC = "majiro_arc"  # Majiro Arc V3 .arc (японские VN)
     ELECTRON_ASAR = "electron_asar"  # Electron app.asar
+    GS_NWJS = "gs_nwjs"  # "GS" движок на NW.js: XOR-зашифрованные ресурсы
     MIXED = "mixed"  # одновременно несколько движков
 
 
@@ -63,6 +64,82 @@ class FormatDetector:
     MAJIRO_ARC_MAGIC = b'MajiroArcV3.000\x00'
     RENPY_EXECUTABLES = {'renpy', 'renpy.exe', 'renpy32.exe', 'renpy64.exe'}
     MAX_HEADER_CHECK = 1024
+
+    # ============ GS-движок на NW.js (House of Maids и др.) ============
+    # Фиксированный 5-байтный XOR-ключ. Источник — класс GS.DataPreparer
+    # в data/ENGINE.js: prepare() делает data[i] ^= key[i % 5], а ключ
+    # строится generateKey() из seed Int32Array([42,11,23,88,133]).
+    GS_NWJS_KEY = b'\x0a\x2b\x36\x6f\x0b'
+    # Строки-маркеры кастомного GS-движка внутри data/ENGINE.js
+    GS_ENGINE_MARKERS = (b'GS.DataPreparer', b'needsPreparation')
+    # Расширения медиа, которые GS-движок шифрует (с валидной сигнатурой
+    # после XOR — это позволяет надёжно отличить зашифрованный файл).
+    GS_MEDIA_EXTS = ('.png', '.jpg', '.jpeg', '.ogg', '.wav', '.webm', '.woff')
+    # Известные сигнатуры медиа после дешифровки (для проверки XOR)
+    GS_NWJS_SIGNATURES = (
+        b'\x89PNG\r\n\x1a\n',  # PNG
+        b'\xff\xd8\xff',       # JPEG
+        b'OggS',               # OGG
+        b'RIFF',               # WAV/RIFF
+        b'wOFF',               # WOFF (little-endian header)
+        b'WOFF',               # WOFF2 / alt
+        b'\x1a\x45\xdf\xa3',   # WebM / Matroska (EBML)
+    )
+
+    # ============ GS-NWJS helpers ============
+
+    @classmethod
+    def _xor(cls, data: bytes, key: bytes = None) -> bytes:
+        """XOR-дешифровка data циклическим ключом (по умолчанию GS-ключ)."""
+        k = key if key is not None else cls.GS_NWJS_KEY
+        klen = len(k)
+        return bytes(data[i] ^ k[i % klen] for i in range(len(data)))
+
+    @classmethod
+    def is_gs_nwjs_encrypted_file(cls, filepath: str) -> bool:
+        """True, если файл — зашифрованный XOR-ключом GS-ресурс.
+
+        Проверка: после XOR с GS-ключом в начале появляется известная
+        сигнатура медиа (PNG/JPEG/OGG/WAV/WOFF/WebM). Обычный незашифрованный
+        файл такую проверку не пройдёт (его XOR с нашим ключом не даст
+        валидную сигнатуру), поэтому ложных срабатываний практически нет.
+        """
+        try:
+            with open(filepath, 'rb') as f:
+                head = f.read(max(len(s) for s in cls.GS_NWJS_SIGNATURES))
+        except (OSError, PermissionError):
+            return False
+        if not head:
+            return False
+        dec = cls._xor(head)
+        return any(dec.startswith(sig) for sig in cls.GS_NWJS_SIGNATURES)
+
+    @classmethod
+    def is_gs_nwjs_game_folder(cls, folder: str) -> bool:
+        """True, если папка — игра на GS-движке поверх NW.js.
+
+        Признаки: рядом лежит data/ENGINE.js (или data/lib/ENGINE.js),
+        содержащий строку-маркер GS.DataPreparer/needsPreparation, а в корне
+        присутствуют NW.js-файлы (nw.dll / nw.exe / package.json).
+        """
+        for engine_rel in ('data/ENGINE.js', 'data/lib/ENGINE.js', 'ENGINE.js'):
+            engine_path = os.path.join(folder, engine_rel.replace('/', os.sep))
+            if os.path.isfile(engine_path):
+                try:
+                    with open(engine_path, 'rb') as f:
+                        blob = f.read(1 << 20)  # до 1 MB достаточно
+                except (OSError, PermissionError):
+                    continue
+                if any(m in blob for m in cls.GS_ENGINE_MARKERS):
+                    # Подтверждаем, что это NW.js-игра
+                    nw_markers = (
+                        'nw.dll', 'nw.exe', 'package.json',
+                        'nw_elf.dll', 'node.dll',
+                    )
+                    for nm in nw_markers:
+                        if os.path.exists(os.path.join(folder, nm)):
+                            return True
+        return False
 
     def detect_file(self, filepath: str) -> GameFormat:
         """Определяет формат одного файла по его заголовку."""
@@ -107,8 +184,13 @@ class FormatDetector:
                 return GameFormat.MAJIRO_ARC
 
         # Unreal PAK
-        if ext == '.pak' and header.startswith(self.PAK_MAGIC):
-            return GameFormat.UNREAL_PAK
+        if ext == '.pak':
+            try:
+                from unpackers.pak_unpacker import UnrealPakUnpacker
+                if UnrealPakUnpacker.detect(filepath):
+                    return GameFormat.UNREAL_PAK
+            except Exception:
+                return GameFormat.UNKNOWN
 
         # Godot PCK
         if ext == '.pck':
@@ -158,6 +240,11 @@ class FormatDetector:
                 return GameFormat.ELECTRON_ASAR if ElectronAsarUnpacker.detect(filepath) else GameFormat.UNKNOWN
             except Exception:
                 return GameFormat.UNKNOWN
+
+        # GS-движок на NW.js: зашифрованные XOR-ключом медиа (PNG/JPG/OGG/...).
+        # Проверяем по содержимому: после XOR появляется валидная сигнатура.
+        if ext in self.GS_MEDIA_EXTS and self.is_gs_nwjs_encrypted_file(filepath):
+            return GameFormat.GS_NWJS
 
         return GameFormat.UNKNOWN
 
@@ -355,13 +442,38 @@ class FormatDetector:
         has_asar = any(a.format == GameFormat.ELECTRON_ASAR for a in assets)
         has_7z = any(a.format == GameFormat.GENERIC_7ZIP for a in assets)
 
+        # GS-движок на NW.js: вся папка игры обрабатывается одним распаковщиком.
+        # Если детектирован маркер движка в ENGINE.js + NW.js-окружение, передаём
+        # корень папки как единственный ассет (распаковщик сам пройдёт по дереву).
+        is_gs_game = (not assets) and self.is_gs_nwjs_game_folder(folder)
+        if is_gs_game:
+            try:
+                root_size = 0
+                for root, _d, files2 in os.walk(folder):
+                    for fn in files2:
+                        try:
+                            root_size += os.path.getsize(os.path.join(root, fn))
+                        except OSError:
+                            pass
+            except OSError:
+                root_size = 0
+            assets.append(AssetInfo(
+                path=folder, size=root_size, format=GameFormat.GS_NWJS,
+            ))
+            total_size += root_size
+
+        has_gs = any(a.format == GameFormat.GS_NWJS for a in assets)
+
         format_count = sum([
             has_rpa, has_unity, has_xp3, has_rpgm, has_ttarch,
             has_majiro, has_asar, has_7z, has_pak, has_pck, has_gax, has_wolf,
+            has_gs,
         ])
         is_mixed = format_count > 1
 
-        if has_xp3 and not is_mixed:
+        if has_gs and not is_mixed:
+            fmt = GameFormat.GS_NWJS
+        elif has_xp3 and not is_mixed:
             fmt = GameFormat.KIRIKIRI_XP3
         elif has_rpgm and not is_mixed:
             fmt = next(

@@ -92,10 +92,7 @@ class Xp3Unpacker(BaseUnpacker):
                 entries = reader.get_entries()
             except Xp3UnsupportedError as e:
                 result.success = False
-                result.errors.append(
-                    f"XP3 format not supported: {e}. "
-                    "If this is an encrypted XP3, decryption is not implemented in this version."
-                )
+                result.errors.append(f"XP3 format not supported: {e}")
                 return result
             except Xp3InvalidFileError as e:
                 result.success = False

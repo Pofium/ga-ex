@@ -25,7 +25,9 @@ XP3 (XP3 Archive) — формат архивов японского движк�
     TIME chunk: 8 байт timestamp
 
 Сжатие: zlib (deflate).
-Шифрование: опциональное (cypher) — не поддерживается в этой реализации.
+Шифрование: поддерживается схема «encrypted XP3» (INFO_FLAG_ENCRYPTED),
+при которой данные файла (после декомпрессии) XOR-ятся одним байтом —
+младшим байтом ADLR-хеша из индекса (Black Lilith и др.).
 Имена: UTF-16LE.
 """
 from __future__ import annotations
@@ -68,6 +70,8 @@ class Xp3Entry:
     # но в большинстве случаев — один. Поддерживаем список.
     # Каждый сегмент: (offset_in_archive, archive_size, original_size, is_compressed)
     segments: List[tuple]
+    encrypted: bool = False  # True если INFO_FLAG_ENCRYPTED (XOR с adlr & 0xFF)
+    adlr: int = 0           # ADLR-хеш из индекса (младший байт — XOR-ключ)
 
 
 class Xp3Error(Exception):
@@ -141,6 +145,8 @@ class Xp3Reader:
           (offset, archive_size, original_size, is_compressed)
         Сегменты конкатенируются в порядке следования; каждый сжатый сегмент
         декомпрессируется отдельно.
+        Если файл помечен флагом encrypted, результат XOR-ится одним байтом —
+        младшим байтом ADLR-хеша (схема Black Lilith и др.).
         """
         f = self._open()
         chunks = []
@@ -151,7 +157,12 @@ class Xp3Reader:
             if is_compressed:
                 data = _decompress_segment(data, org_size)
             chunks.append(data)
-        return b''.join(chunks)
+        data = b''.join(chunks)
+        if entry.encrypted:
+            key = entry.adlr & 0xFF
+            if key:
+                data = bytes(b ^ key for b in data)
+        return data
 
     def file_size(self) -> int:
         return os.path.getsize(self.filepath)
@@ -348,12 +359,11 @@ class Xp3Reader:
         except UnicodeDecodeError:
             name = None
         encrypted = bool(flags & INFO_FLAG_ENCRYPTED)
-        if encrypted:
-            raise Xp3UnsupportedError('Encrypted XP3 not supported')
         compressed = bool(flags & INFO_FLAG_COMPRESSED)
         current['info'] = {
             'flags': flags,
             'compressed': compressed,
+            'encrypted': encrypted,
             'original_size': org_size,
             'archive_size': arc_size,
         }
@@ -406,6 +416,8 @@ class Xp3Reader:
             size=size,
             original_size=original_size or sum(s['original_size'] for s in segm),
             compressed=compressed,
+            encrypted=bool(info.get('encrypted', False)),
+            adlr=int(current.get('adlr') or 0),
             segments=segments,
         )
         self._entries.append(entry)

@@ -40,17 +40,47 @@ def _parse_asar_header(asar_path: str) -> Tuple[dict, int]:
     if len(header_pickle) < 4:
         raise ValueError('invalid header pickle')
 
-    json_len = _read_uint32_le(header_pickle, 0)
-    json_start = 4
-    json_end = json_start + json_len
-    if json_end > len(header_pickle):
-        raise ValueError('invalid header pickle (json_len out of range)')
+    # Внутренний pickle хранит JSON-заголовок. Есть два варианта структуры
+    # в зависимости от сборщика asar:
+    #   1) классический asar (npm):  [uint32 json_len][JSON][padding]
+    #      JSON начинается на смещении 4, длина — json_len.
+    #   2) TyranoBuilder/некоторые сборки Electron:  [uint32 json_len][uint32 json_len-4][JSON]
+    #      дополнительный uint32 (capacity) перед JSON, JSON на смещении 8.
+    # Проверяем оба варианта: для каждого старт-смещения читаем поле длины
+    # перед ним и пробуем распарсить ровно json_len байт (без trailing-мусора).
+    declared_len = _read_uint32_le(header_pickle, 0)
+    header = None
+    candidates: List[Tuple[int, int]] = []
+    # Вариант 1: JSON на смещении 4, длина = declared_len
+    if declared_len > 0 and 4 + declared_len <= len(header_pickle):
+        candidates.append((4, declared_len))
+    # Вариант 2: второй uint32 — это реальная длина JSON на смещении 8
+    if len(header_pickle) >= 12:
+        alt_len = _read_uint32_le(header_pickle, 4)
+        if alt_len > 0 and 8 + alt_len <= len(header_pickle):
+            candidates.append((8, alt_len))
 
-    json_bytes = header_pickle[json_start:json_end]
-    try:
-        header = json.loads(json_bytes.decode('utf-8'))
-    except Exception as e:
-        raise ValueError(f'cannot parse header JSON: {type(e).__name__}: {e}') from e
+    # Fallback: поиск '{' и парсинг до конца pickle (на случай нестандартной длины)
+    brace = header_pickle.find(b'{')
+    if brace >= 0:
+        candidates.append((brace, len(header_pickle) - brace))
+
+    for start, length in candidates:
+        if start < 0 or length <= 0 or start + length > len(header_pickle):
+            continue
+        if header_pickle[start:start + 1] != b'{':
+            continue
+        json_bytes = header_pickle[start:start + length]
+        try:
+            parsed = json.loads(json_bytes.decode('utf-8'))
+        except Exception:
+            continue
+        if isinstance(parsed, dict) and 'files' in parsed:
+            header = parsed
+            break
+
+    if header is None:
+        raise ValueError('cannot parse header JSON (no valid asar header found)')
 
     base_offset = 8 + header_size
     return header, base_offset

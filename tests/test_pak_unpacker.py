@@ -1,5 +1,6 @@
 """Тесты для UnrealPakUnpacker."""
 import os
+import struct
 import sys
 import unittest
 import tempfile
@@ -9,7 +10,37 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from unpackers.pak_unpacker import (
     UnrealPakUnpacker,
     UNREAL_PAK_MAGIC,
+    UNREAL_PAK_FOOTER_MAGIC,
+    get_unreal_pak_encryption_info,
+    normalize_unreal_aes_key,
 )
+
+
+def make_footer_pak(size: int = 256, footer_size: int = 44, version: int = 8) -> bytes:
+    """Создаёт синтетический `.pak` с магией в footer, а не в начале."""
+    if size <= footer_size:
+        raise ValueError('size must be greater than footer_size')
+    data = bytearray(b'\x00' * size)
+    pos = size - footer_size
+    data[pos:pos + 4] = struct.pack('<I', UNREAL_PAK_FOOTER_MAGIC)
+    data[pos + 4:pos + 8] = struct.pack('<I', version)
+    return bytes(data)
+
+
+def make_encrypted_footer_pak(size: int = 512) -> bytes:
+    """Создаёт синтетический Unreal `.pak` c footer v12 и encrypted index."""
+    footer_size = 221
+    if size <= footer_size:
+        raise ValueError('size must be greater than footer_size')
+
+    data = bytearray(b'\x00' * size)
+    pos = size - footer_size
+    guid = bytes.fromhex('11223344556677889900AABBCCDDEEFF')
+    data[pos:pos + 16] = guid
+    data[pos + 16] = 1  # encrypted index
+    data[pos + 17:pos + 21] = struct.pack('<I', UNREAL_PAK_FOOTER_MAGIC)
+    data[pos + 21:pos + 25] = struct.pack('<I', 11)  # v12 stored as 11
+    return bytes(data)
 
 
 class TestDetect(unittest.TestCase):
@@ -32,6 +63,16 @@ class TestDetect(unittest.TestCase):
             path = f.name
         try:
             self.assertFalse(UnrealPakUnpacker.detect(path))
+        finally:
+            os.unlink(path)
+
+    def test_detect_footer_magic(self):
+        """Детект работает и для UE4/UE5 `.pak`, где магия лежит в footer."""
+        with tempfile.NamedTemporaryFile(suffix='.pak', delete=False) as f:
+            f.write(make_footer_pak())
+            path = f.name
+        try:
+            self.assertTrue(UnrealPakUnpacker.detect(path))
         finally:
             os.unlink(path)
 
@@ -65,6 +106,54 @@ class TestAnalyze(unittest.TestCase):
             self.assertEqual(info['type'], 'unreal_pak')
         finally:
             os.unlink(path)
+
+    def test_analyze_reads_encrypted_footer_info(self):
+        """analyze видит зашифрованный индекс и encryption guid из footer."""
+        with tempfile.NamedTemporaryFile(suffix='.pak', delete=False) as f:
+            f.write(make_encrypted_footer_pak())
+            path = f.name
+        try:
+            u = UnrealPakUnpacker()
+            info = u.analyze(path)
+            self.assertTrue(info['detected'])
+            self.assertTrue(info['is_encrypted_index'])
+            self.assertEqual(info['version'], 12)
+            self.assertEqual(
+                info['encryption_guid'],
+                '11223344556677889900aabbccddeeff',
+            )
+        finally:
+            os.unlink(path)
+
+
+class TestHelpers(unittest.TestCase):
+    """Тесты вспомогательных функций Unreal AES."""
+
+    def test_get_unreal_pak_encryption_info(self):
+        """Флаг encrypted index читается напрямую из footer."""
+        with tempfile.NamedTemporaryFile(suffix='.pak', delete=False) as f:
+            f.write(make_encrypted_footer_pak())
+            path = f.name
+        try:
+            info = get_unreal_pak_encryption_info(path)
+            self.assertTrue(info['detected'])
+            self.assertTrue(info['is_encrypted_index'])
+            self.assertEqual(info['version'], 12)
+        finally:
+            os.unlink(path)
+
+    def test_normalize_unreal_aes_key(self):
+        """AES-ключ нормализуется к виду `0x...`."""
+        key = 'c3aec3423c1676d9cfa5a5f3cb81ddf95ce7df7b79ccfb0de58cf48a5947395a'
+        self.assertEqual(
+            normalize_unreal_aes_key(key),
+            '0xC3AEC3423C1676D9CFA5A5F3CB81DDF95CE7DF7B79CCFB0DE58CF48A5947395A',
+        )
+
+    def test_normalize_unreal_aes_key_rejects_short_value(self):
+        """Короткий AES-ключ отклоняется."""
+        with self.assertRaises(ValueError):
+            normalize_unreal_aes_key('1234')
 
 
 class TestUnpack(unittest.TestCase):

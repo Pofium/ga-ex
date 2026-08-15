@@ -16,6 +16,8 @@ class UnpackOptions:
     # Путь к exe игры (используется GaxUnpacker для извлечения ключа
     # CatSystem2 из исполняемого файла)
     game_exe_path: Optional[str] = None
+    # AES-ключ Unreal Engine .pak (hex, обычно 64 символа / 32 байта)
+    unreal_aes_key: Optional[str] = None
 
 
 @dataclass
